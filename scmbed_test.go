@@ -57,12 +57,13 @@ func TestOne(t *testing.T) {
 	it.InstallGo("(make/vararg)", func(v ...interface{}) []interface{} {
 		return v
 	})
-	it.InstallGo("(make/bytes)", func(n int) ([]byte, error) {
-		l := make([]byte, n)
+	it.Install("(make/bytes)", func(s *State) {
+		n, _ := s.In(0).Itf()
+		l := make([]byte, n.(int64))
 		for i := 0; i < len(l); i++ {
 			l[i] = byte(i) + 1
 		}
-		return l, nil
+		s.Out = VInterface(l)
 	})
 	it.Install("(make/list)", func(s *State) {
 		l := make([]Value, int(s.InNumber(0)))
@@ -117,7 +118,7 @@ func TestOne(t *testing.T) {
 	assert("(assert (list-eq? (quasiquote (1 2 3 ,(cons 4 `(5 ,(* 2 3))))) '(1 2 3 (4 5 6))))")
 	assert("(assert (list-eq? `( 1 ',(+ 2 3)) '(1 '5)))")
 	// assert("(assert (println (list 'defun 'a) '(defun a)")
-	assert(`(let () (define list (make/bytes 10)) (vector-set-nth! list 0 10) (assert (== 10 (vector-nth list 0)`)
+	assert(`(let () (define list (make/bytes (i64 d10))) (vector-set-nth! list 0 10) (assert (== 10 (vector-nth list 0)`)
 	assert(`(let () (define-record 'user 'name 'ok) (define a (user-new 'ok #f)) (user-ok-set! a #t) (assert (user-ok a)) `)
 	assert(`(assert (== 20 (reduce + 0 (map (lambda (a) ($ a * 2)) '(1 2 3 4)`)
 	assert(`(define makecps (lambda (f)

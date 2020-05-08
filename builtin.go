@@ -82,6 +82,27 @@ func (it *Interpreter) InstallGo(name string, fn interface{}) {
 }
 
 func init() {
+	predefined.Install("#(i64 @value)", func(s *State) {
+		t, unsigned, base := strings.ToLower(s.InAtom(0)), false, 10
+		if strings.HasPrefix(t, "u") {
+			t, unsigned = t[1:], true
+		}
+		switch t[0] {
+		case 'x':
+			base = 16
+		case 'o':
+			base = 8
+		case 'b':
+			base = 2
+		}
+		if unsigned {
+			v, _ := strconv.ParseUint(strings.TrimLeft(t, "udxob"), base, 64)
+			s.Out = VInterface(v)
+		} else {
+			v, _ := strconv.ParseInt(strings.TrimLeft(t, "udxob"), base, 64)
+			s.Out = VInterface(v)
+		}
+	})
 	predefined.Install("(list-depth list)", func(s *State) { s.Out = Val(maxdepth(s.InList(0))) })
 	predefined.Install("(go-value-wrap a)", func(s *State) { s.Out = ValRec(s.In(0).GoValue()) })
 	predefined.Install("(map-new key0 value0 key1 value1 ...)", func(s *State) {

@@ -730,7 +730,7 @@ func (it *Interpreter) UnwrapMacro(comp []Value) (Value, error) {
 		return Void, err
 	}
 	if v.Type() != 'l' {
-		return begin(comp[0], v), nil
+		return v, nil
 	}
 	return VList(v._flatten()...), nil
 }
@@ -968,8 +968,13 @@ func VInterface(v interface{}) Value { return _Vitf(v, -'i') }
 
 func _Vitf(v interface{}, c int) (vs Value) {
 	vs.c = c
-	*(*interface{})(unsafe.Pointer(&vs)) = v
+	*vs._itfptr() = v
 	return
+}
+
+//go:nosplit
+func (v *Value) _itfptr() *interface{} {
+	return (*interface{})(unsafe.Pointer(uintptr(unsafe.Pointer(v)) + (64-strconv.IntSize)/8))
 }
 
 func (v Value) IsVoid() bool { return v == Value{} }
@@ -1032,13 +1037,13 @@ func (v Value) String() string {
 }
 
 func (v Value) GoValue() interface{} {
-	switch vn, vs, _, vl, vtype := v._value(); vtype {
+	switch vn, vs, _, _, vtype := v._value(); vtype {
 	case 'n':
 		return vn
 	case 's':
 		return vs
 	case 'l', 'd':
-		return vl
+		return v._flatten() // TODO
 	}
 	switch v.Type() {
 	case 'b':
@@ -1069,7 +1074,7 @@ func (v Value) Equals(v2 Value) bool {
 		return x == x2 && *(*string)(unsafe.Pointer(&v.b)) == *(*string)(unsafe.Pointer(&v2.b))
 	}
 	if v.c == v2.c && v.c == -'i' {
-		return *(*interface{})(unsafe.Pointer(&v)) == *(*interface{})(unsafe.Pointer(&v2))
+		return *v._itfptr() == *v2._itfptr()
 	}
 	return false
 }
@@ -1079,7 +1084,7 @@ func (v Value) Itf() (interface{}, bool) {
 	if v.c != -'i' {
 		return nil, false
 	}
-	return *(*interface{})(unsafe.Pointer(&v)), true
+	return *v._itfptr(), true
 }
 
 func (v Value) Fun() (*Func, bool) {
