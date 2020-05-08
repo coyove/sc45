@@ -538,7 +538,7 @@ TAIL_CALL:
 		x, ok := c._at(1).Atm()
 		state.assert(ok || state.panic("invalid set! syntax"))
 		_, m := state.local.find(x)
-		state.assert(m != nil || state.panic("set!: %s not found", x))
+		state.assert(m != nil || state.panic("set!: unbound %s", x))
 		m.set(x, it.exec(c._at(2), state))
 		return Void
 	case "define":
@@ -546,7 +546,7 @@ TAIL_CALL:
 		x, ok := c._at(1).Atm()
 		state.assert(ok || state.panic("invalid define syntax"))
 		_, ok = state.local.m[x]
-		state.assert(!ok || state.panic("redefine %s", x))
+		state.assert(!ok || state.panic("re-define %s", x))
 		state.local.set(x, it.exec(c._at(2), state))
 		return Void
 	default:
