@@ -82,9 +82,6 @@ func (it *Interpreter) InstallGo(name string, fn interface{}) {
 }
 
 func init() {
-	if predefined.Globals == nil {
-		predefined.Globals = &Map{}
-	}
 	predefined.Install("(list-depth list)", func(s *State) { s.Out = Val(maxdepth(s.InList(0))) })
 	predefined.Install("(go-value-wrap a)", func(s *State) { s.Out = ValRec(s.In(0).GoValue()) })
 	predefined.Install("(map-new key0 value0 key1 value1 ...)", func(s *State) {
@@ -575,6 +572,10 @@ func (it *Interpreter) InjectDebugREPLIntopprof(title string) *Interpreter {
 	ww := &bytes.Buffer{}
 	DefaultStdout = ww
 
+	http.HandleFunc("/debug/pprof/repl/tribute.min.js", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "tribute.min.js")
+	})
+
 	http.HandleFunc("/debug/pprof/repl", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
 			p := bytes.Buffer{}
@@ -587,7 +588,7 @@ func (it *Interpreter) InjectDebugREPLIntopprof(title string) *Interpreter {
 	.results > div { display: block !important; }
 	.results .result {margin-left:1em;white-space:pre-wrap}
 </style>
-<script src="http://tosv.byted.org/obj/tostest/tribute.min.js" ></script>
+<script src="/debug/pprof/repl/tribute.min.js" ></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tributejs/5.1.2/tribute.min.css" integrity="sha256-jCuf8eDAzmPpRqt5n0v1utTOCeWZc4OrGbv24Pw+ltk=" crossorigin="anonymous" />
 
 <form onsubmit="var _=this;post('',{cmd:this.querySelector('#cmd').value},function(obj, data){

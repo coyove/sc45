@@ -17,9 +17,8 @@ import (
 )
 
 var (
-	predefined Interpreter // pre-defined functions go here
-	Void       = Value{}
-	Empty      = VList()
+	predefined  = Interpreter{Globals: &Map{}} // pre-defined functions go here
+	Void, Empty = Value{}, VList()
 )
 
 type (
@@ -71,9 +70,6 @@ func New() *Interpreter {
 }
 
 func init() {
-	if predefined.Globals == nil {
-		predefined.Globals = &Map{}
-	}
 	predefined.Globals.Store("define", VFunc(&Func{sig: "(syntax·define var val)", f: func(*State) {}}))
 	predefined.Globals.Store("set!", VFunc(&Func{sig: "(syntax·set! var val)", f: func(*State) {}}))
 	predefined.Globals.Store("lambda", VFunc(&Func{sig: "(syntax·lambda paramlist body)", f: func(*State) {}}))
@@ -213,10 +209,10 @@ func init() {
 			names, values = append(names, p[0]), append(values, p[1])
 		}
 		fn := VList(s.Caller.DupAtom("lambda"), VList(names...), begin(s.Caller, s.Args[1:]...))
-		s.Out = VList(VList(fn, _Vddd(values...)).flatten()...) // call fn
+		s.Out = VList(VList(fn, _Vddd(values...))._flatten()...) // call fn
 	})
 	predefined.Install("#(letrec ((var1 val1) ... (varn valn)) expr...)", func(s *State) {
-		/* UnwrapMacrod to:
+		/* Unwrap to:
 		(let ((var1 ()) ... (varn ())                  // outer binds
 			(let ((var1_tmp val1) ... (varn_tmp valn)) // inner binds
 				(set! 'var1 var1_tmp)                  // inner sets
@@ -238,7 +234,7 @@ func init() {
 			innerbinds[i] = VList(tmpvar, b[1])
 			outerbinds[i] = VList(b[0], Void)
 		}
-		inner, _ := s.It.UnwrapMacro(VList(let, VList(innerbinds...), _Vddd(innersets...), _Vddd(s.Args[1:]...)).flatten())
+		inner, _ := s.It.UnwrapMacro(VList(let, VList(innerbinds...), _Vddd(innersets...), _Vddd(s.Args[1:]...))._flatten())
 		outer, _ := s.It.UnwrapMacro([]Value{let, VList(outerbinds...), inner})
 		s.Out = outer
 	})
@@ -301,12 +297,9 @@ func init() {
 	})
 	predefined.Install("(apply function (list a1 a2 ... an))", func(s *State) {
 		s.InList(1)
-		v, err := s.InGoFunc(0)(s.In(1).flatten()...)
-		if err != nil {
-			panic(err)
-		} else {
-			s.Out = v
-		}
+		v, err := s.InGoFunc(0)(s.In(1)._flatten()...)
+		s.assert(err == nil || s.panic("apply panic: %v", err))
+		s.Out = v
 	})
 	predefined.Install("(error text)", func(s *State) { s.Out = VInterface(errors.New(s.InString(0))) })
 	predefined.Install("(error? a)", func(s *State) { _, ok := s.In(0).GoValue().(error); s.Out = VBool(ok) })
@@ -386,7 +379,7 @@ func (s *State) InAtom(i int, c ...string) string {
 			return v
 		}
 	}
-	s.assert(len(c) == 0 || s.panic("invalid argument at %d, expect one of (%v), got %v", i, strings.Join(c, ", "), v))
+	s.assert(len(c) == 0 || s.panic("invalid atom at %d, expect one of (%v), got %v", i, strings.Join(c, ", "), v))
 	return v
 }
 
@@ -538,6 +531,8 @@ TAIL_CALL:
 		v := it.exec(c._at(1), state)
 		state.quasi = false
 		return v
+	case "unquote":
+		panic(fmt.Errorf("unquote outside quasiquote"))
 	case "set!":
 		state.assert(c._len() == 3 || state.panic("invalid set! syntax"))
 		x, ok := c._at(1).Atm()
@@ -737,7 +732,7 @@ func (it *Interpreter) UnwrapMacro(comp []Value) (Value, error) {
 	if v.Type() != 'l' {
 		return begin(comp[0], v), nil
 	}
-	return VList(v.flatten()...), nil
+	return VList(v._flatten()...), nil
 }
 
 func scanToDelim(s *scanner.Scanner) string {
@@ -966,9 +961,9 @@ func VAtom(v string, line, col uint32) (vs Value) {
 
 func VNumber(v float64) Value        { return Value{c: -'n', a: v} }
 func VList(l ...Value) Value         { return _Vitf(l, -'l') }
-func _Vddd(l ...Value) Value         { return _Vitf(l, -'d') }
-func _Vquote(v Value) Value          { return Value{c: -'q', b: unsafe.Pointer(&v)} }
 func VFunc(f *Func) Value            { return _Vitf(f, -'f') }
+func _Vddd(l ...Value) Value         { return _Vitf(l, -'d') }                        // internal use
+func _Vquote(v Value) Value          { return Value{c: -'q', b: unsafe.Pointer(&v)} } // internal use
 func VInterface(v interface{}) Value { return _Vitf(v, -'i') }
 
 func _Vitf(v interface{}, c int) (vs Value) {
@@ -978,7 +973,6 @@ func _Vitf(v interface{}, c int) (vs Value) {
 }
 
 func (v Value) IsVoid() bool { return v == Value{} }
-
 func (v Value) IsTrue() bool { return v.c == -'b' && v.a == 1 }
 
 //go:nosplit
@@ -1012,12 +1006,7 @@ func (v Value) String() string {
 		}
 		return vs
 	case 'l', 'd':
-		p := bytes.Buffer{}
-		if vtype == 'l' {
-			p.WriteString("(")
-		} else {
-			p.WriteString("/*{*/ ")
-		}
+		p := bytes.NewBufferString(ifstr(vtype == 'l', "(", "/*{*/ "))
 		for _, e := range vl {
 			p.WriteString(e.String())
 			p.WriteString(" ")
@@ -1025,11 +1014,7 @@ func (v Value) String() string {
 		for p.Len() > 0 && p.Bytes()[p.Len()-1] == ' ' {
 			p.Truncate(p.Len() - 1)
 		}
-		if vtype == 'l' {
-			p.WriteString(")")
-		} else {
-			p.WriteString(" /*}*/")
-		}
+		p.WriteString(ifstr(vtype == 'l', ")", " /*}*/"))
 		return p.String()
 	default:
 		switch v.Type() {
@@ -1076,30 +1061,6 @@ func (v Value) DupAtom(text string) Value {
 	return VAtom(text, 0, 0)
 }
 
-func (v Value) flatten() []Value {
-	ex := 0
-	for _, e := range v._lst() {
-		if x := e.Type(); x == 'd' || x == 'l' {
-			ex += e._len() + 1
-		}
-	}
-	if ex == 0 {
-		return append([]Value{}, v._lst()...)
-	}
-	r := make([]Value, 0, ex+v._len())
-	for _, e := range v._lst() {
-		switch e.Type() {
-		case 'd':
-			r = append(r, e.flatten()...)
-		case 'l':
-			r = append(r, VList(e.flatten()...))
-		default:
-			r = append(r, e)
-		}
-	}
-	return r
-}
-
 func (v Value) Equals(v2 Value) bool {
 	if v == v2 {
 		return true
@@ -1128,30 +1089,23 @@ func (v Value) Fun() (*Func, bool) {
 	return (*Func)(v.b), true
 }
 
-func (v Value) Bln() (bool, bool) {
-	return v.a == 1, v.c == -'b'
-}
-
-func (v Value) Num() (float64, bool) {
-	return v.a, v.c == -'n'
-}
+func (v Value) Bln() (bool, bool)    { return v.a == 1, v.c == -'b' }
+func (v Value) Num() (float64, bool) { return v.a, v.c == -'n' }
 
 func (v Value) Str() (a string, ok bool) {
-	if x := math.Float64bits(v.a); x&0x3 == 3 {
+	if v.Type() == 's' {
 		a, ok = *(*string)(unsafe.Pointer(&v.b)), true
 	}
 	return
 }
 
-func (v Value) Pos() (line, col uint32, ok bool) {
-	if x := math.Float64bits(v.a); x&0x3 == 2 {
-		line, col, ok = uint32(x>>33), uint32(x<<31>>33), true
-	}
-	return
+func (v Value) Pos() (uint32, uint32, bool) {
+	x := math.Float64bits(v.a)
+	return uint32(x >> 33), uint32(x << 31 >> 33), x&0x3 == 2
 }
 
 func (v Value) Atm() (a string, ok bool) {
-	if x := math.Float64bits(v.a); x&0x3 == 2 {
+	if v.Type() == 'a' {
 		a, ok = *(*string)(unsafe.Pointer(&v.b)), true
 	}
 	return
@@ -1169,13 +1123,9 @@ func (v Value) _at(i int) Value {
 	hdr := (*reflect.SliceHeader)(v.b)
 	return *(*Value)(unsafe.Pointer(hdr.Data + unsafe.Sizeof(Value{})*uintptr(i)))
 }
-
-func (v Value) _len() int { return (*reflect.SliceHeader)(v.b).Len }
-
+func (v Value) _len() int       { return (*reflect.SliceHeader)(v.b).Len }
 func (v Value) _unquote() Value { return *(*Value)(v.b) }
-
-func (v Value) _lst() []Value { return *(*[]Value)(v.b) }
-
+func (v Value) _lst() []Value   { return *(*[]Value)(v.b) }
 func (v Value) _value() (vn float64, vs string, vq Value, vl []Value, vtype byte) {
 	switch v.c {
 	case -'n':
@@ -1194,6 +1144,29 @@ func (v Value) _value() (vn float64, vs string, vq Value, vl []Value, vtype byte
 		}
 	}
 	return
+}
+func (v Value) _flatten() []Value {
+	ex := 0
+	for _, e := range v._lst() {
+		if x := e.Type(); x == 'd' || x == 'l' {
+			ex += e._len() + 1
+		}
+	}
+	if ex == 0 {
+		return append([]Value{}, v._lst()...)
+	}
+	r := make([]Value, 0, ex+v._len())
+	for _, e := range v._lst() {
+		switch e.Type() {
+		case 'd':
+			r = append(r, e._flatten()...)
+		case 'l':
+			r = append(r, VList(e._flatten()...))
+		default:
+			r = append(r, e)
+		}
+	}
+	return r
 }
 
 func (v Value) GoString() string {

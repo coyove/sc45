@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -133,7 +135,7 @@ func TestOne(t *testing.T) {
 	 			(if (== false (cb (car s) idx )) ()
 	 				(ForeachImpl (cdr s) cb (+ idx 1)))))))] (ForeachImpl s cb 0)) ;;`)
 
-	// assert(`(define Counter 0) (Foreach (make/list 1000000) (lambda (v) (begin (set! Counter (+ Counter 1)) (assert (== Counter v`)
+	assert(`(define Counter 0) (Foreach (make/list 1000000) (lambda (v) (begin (set! Counter (+ Counter 1)) (assert (== Counter v`)
 	assert(`
 	 	 // let's play closure
 	 	 (define build-incr (lambda (start)
@@ -343,5 +345,13 @@ ALL:
 		}
 		list, _ = Init(list)
 		i--
+	}
+}
+
+func TestLaunchWeb(t *testing.T) {
+	if x := os.Getenv("DEBUG"); x != "" {
+		it := New()
+		it.InjectDebugREPLIntopprof("debug")
+		http.ListenAndServe(x, nil)
 	}
 }
