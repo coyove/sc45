@@ -31,19 +31,19 @@ func TestOne(t *testing.T) {
 		}
 	})
 	it.Install("(var/test)", func(s *State) {
-		v := s.InNumber(0)
+		v := s.Int(0, 'n').Num()
 		a := s.Args[1:]
 		if v == 100 {
 			s.Out = VInterface(fmt.Errorf(""))
 		} else {
-			av, _ := a[0].Num()
+			av := a[0].Num()
 			a[0] = VNumber(av + v)
 			s.Out = VList(append([]Value{}, a...)...)
 		}
 	})
 	// it.Install("callee", "", func(v int64) int64 { return v * 10 })
 	it.Install("(test/struct-gen)", func(s *State) {
-		if !s.InBool(0) {
+		if !s.In(0).IsTrue() {
 			s.Out = VInterface((*dummy)(nil))
 			return
 		}
@@ -56,7 +56,7 @@ func TestOne(t *testing.T) {
 		return v
 	})
 	it.Install("(make/bytes)", func(s *State) {
-		n, _ := s.In(0).Itf()
+		n := s.In(0).Itf()
 		l := make([]byte, n.(int64))
 		for i := 0; i < len(l); i++ {
 			l[i] = byte(i) + 1
@@ -64,7 +64,7 @@ func TestOne(t *testing.T) {
 		s.Out = VInterface(l)
 	})
 	it.Install("(make/list)", func(s *State) {
-		l := make([]Value, int(s.InNumber(0)))
+		l := make([]Value, int(s.Int(0, 'n').Num()))
 		for i := 0; i < len(l); i++ {
 			l[i] = VNumber(float64(i) + 1)
 		}
@@ -72,7 +72,7 @@ func TestOne(t *testing.T) {
 	})
 	it.Install("(range)", func(s *State) {
 		m := s.InMap(0)
-		f := s.InGoFunc(1)
+		f := s.InFunc(1)
 		for k, v := range m {
 			err, ok := f(VString(k), v)
 			log.Println("===", err, ok)
@@ -135,7 +135,7 @@ func TestOne(t *testing.T) {
 	 			(if (== false (cb (car s) idx )) ()
 	 				(ForeachImpl (cdr s) cb (+ idx 1)))))))] (ForeachImpl s cb 0)) ;;`)
 
-	// assert(`(define Counter 0) (Foreach (make/list 1000000) (lambda (v) (begin (set! Counter (+ Counter 1)) (assert (== Counter v`)
+	assert(`(define Counter 0) (Foreach (make/list 1000000) (lambda (v) (begin (set! Counter (+ Counter 1)) (assert (== Counter v`)
 	assert(`
 	 	 // let's play closure
 	 	 (define build-incr (lambda (start)
@@ -331,7 +331,7 @@ ALL:
 
 	i := 0.0
 	for h, ok := Head(list, nil); ok; h, ok = Head(list, nil) {
-		if n, _ := h.Num(); n != i {
+		if n := h.Num(); n != i {
 			t.Fatal("head:", h, i, list)
 		}
 		list, _ = Tail(list)
@@ -341,7 +341,7 @@ ALL:
 	list = list2
 	i = float64(count) - 1
 	for h, ok := Last(list, nil); ok; h, ok = Last(list, nil) {
-		if n, _ := h.Num(); n != i {
+		if n := h.Num(); n != i {
 			t.Fatal("last:", h, i, list)
 		}
 		list, _ = Init(list)
@@ -349,7 +349,7 @@ ALL:
 	}
 
 	_range(0, list3, func(idx int, v Value) {
-		n, _ := v.Num()
+		n := v.Num()
 		if int(n) != idx {
 			t.Fatal(v, idx)
 		}
