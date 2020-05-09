@@ -92,10 +92,12 @@ func TestOne(t *testing.T) {
 	it.Install("#(iff)", func(s *State) {
 		s.Out = s.In(1)
 	})
+	assert("(assert (= #/中 0x4e2d")
 	assert(`(if #f (+ 1 #| inline || comment (assert false) #|#  2 3.5) (lambda (a b) ())`)
 	assert(`(assert ( [lambda* (a b) (assert (= a 1)) (null? b)] 1) `)
 	assert(`( [lambda* (a [b (+ a 1)] ) (assert (= a 1)) (assert (= b 2))] 1) `)
 	assert(`( [lambda* (a b c...) (assert (= 1 (length c))) (assert (car c))] 1 2 #t) `)
+	assert("(let* ((a 1) (b (+ a 1))) (assert (= b 2))")
 	assert(`
 	 (define (list-eq? list1 list2)
 	 	(if (and (list? list1) (list? list2))

@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"log"
 	"os"
 	"reflect"
 	"regexp"
@@ -87,6 +88,50 @@ func (it *Interpreter) Funcs() map[string]*Func {
 }
 
 func init() {
+	predefined.Install("#(letrec ((var1 val1) ... (varn valn)) expr...)", func(s *State) {
+		/* Unwrap to:
+		(let ((var1 ()) ... (varn ())                  // outer binds
+			(let ((var1_tmp val1) ... (varn_tmp valn)) // inner binds
+				(set! 'var1 var1_tmp)                  // inner sets
+				...
+				(set! 'varn varb_tmp)
+				expr...                                // expressions
+		*/
+		let, binds := s.Caller.Rename("let"), s.Int(0, 'l').Lst()
+		innersets := make([]Value, len(binds))
+		innerbinds := make([]Value, len(binds))
+		outerbinds := make([]Value, len(binds))
+		for i := range binds {
+			s.assert(binds[i].Type() == 'l' || s.panic("invalid binding list format: %v", binds[i]))
+			b := binds[i].Lst()
+			s.assert(len(b) == 2 && b[0].Type() == 'a' && b[0].Str() != "" || s.panic("invalid binding list format: %v", binds[i]))
+			tmpvar := Atm(b[0].Str()+"tmp", 0, 0)
+			innersets[i] = Lst(Atm("set!", 0, 0), b[0], tmpvar)
+			innerbinds[i] = Lst(tmpvar, b[1])
+			outerbinds[i] = Lst(b[0], Void)
+		}
+		inner, _ := UnwrapMacro(Lst(let, Lst(innerbinds...), _Vddd(innersets...), _Vddd(s.Args[1:]...))._flatten(), s.Map)
+		outer, _ := UnwrapMacro([]Value{let, Lst(outerbinds...), inner}, s.Map)
+		s.Out = outer
+	})
+	predefined.Install("#(let* ((var1 val1) ... (varn valn)) expr...)", func(s *State) {
+		/* Unwrap to:
+		(let ((var1 val1)
+			(let ((var2 val2))
+				...
+					expr...
+		*/
+		let, binds := s.Caller.Rename("let"), s.Int(0, 'l').Lst()
+		last := begin(s.Caller, s.Args[1:]...)
+		for i := len(binds) - 1; i >= 0; i-- {
+			bd := binds[i]
+			s.assert(bd.Type() == 'l' || s.panic("invalid binding list format: %v", bd))
+			s.assert(bd._len() == 2 && bd._at(0).Type() == 'a' && bd._at(0).Str() != "" || s.panic("invalid binding list format: %v", bd))
+			last, _ = UnwrapMacro([]Value{let, Lst(bd), begin(s.Caller, last)}, s.Map)
+		}
+		log.Println(last)
+		s.Out = last
+	})
 	predefined.Install("#(i64 @value)", func(s *State) {
 		t, unsigned, base := strings.ToLower(s.Int(0, 'a').Str()), false, 10
 		if strings.HasPrefix(t, "u") {

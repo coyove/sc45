@@ -13,6 +13,7 @@ import (
 	"strings"
 	"text/scanner"
 	"unicode"
+	"unicode/utf8"
 	"unsafe"
 )
 
@@ -216,32 +217,6 @@ func init() {
 		}
 		fn := Lst(s.Caller.Rename("lambda"), Lst(names...), begin(s.Caller, s.Args[1:]...))
 		s.Out = Lst(Lst(fn, _Vddd(values...))._flatten()...) // call fn
-	})
-	predefined.Install("#(letrec ((var1 val1) ... (varn valn)) expr...)", func(s *State) {
-		/* Unwrap to:
-		(let ((var1 ()) ... (varn ())                  // outer binds
-			(let ((var1_tmp val1) ... (varn_tmp valn)) // inner binds
-				(set! 'var1 var1_tmp)                  // inner sets
-				...
-				(set! 'varn varb_tmp)
-				expr...                                // expressions
-		*/
-		let, binds := s.Caller.Rename("let"), s.Int(0, 'l').Lst()
-		innersets := make([]Value, len(binds))
-		innerbinds := make([]Value, len(binds))
-		outerbinds := make([]Value, len(binds))
-		for i := range binds {
-			s.assert(binds[i].Type() == 'l' || s.panic("invalid binding list format: %v", binds[i]))
-			b := binds[i].Lst()
-			s.assert(len(b) == 2 && b[0].Type() == 'a' && b[0].Str() != "" || s.panic("invalid binding list format: %v", binds[i]))
-			tmpvar := Atm(b[0].Str()+"tmp", 0, 0)
-			innersets[i] = Lst(Atm("set!", 0, 0), b[0], tmpvar)
-			innerbinds[i] = Lst(tmpvar, b[1])
-			outerbinds[i] = Lst(b[0], Void)
-		}
-		inner, _ := UnwrapMacro(Lst(let, Lst(innerbinds...), _Vddd(innersets...), _Vddd(s.Args[1:]...))._flatten(), s.Map)
-		outer, _ := UnwrapMacro([]Value{let, Lst(outerbinds...), inner}, s.Map)
-		s.Out = outer
 	})
 	predefined.Install("(eval expr)", func(s *State) {
 		s.Out = errorOrValue(executeState(s.In(0), execState{local: s.Map}))
@@ -565,7 +540,10 @@ func parse(tmpl string, macroEvalEnv *Map) (Value, error) {
 	if perr != nil {
 		return Void, fmt.Errorf("parse: %v at %d:%d", perr, s.Pos().Line, s.Pos().Column)
 	}
-	return begin(Void, v.Lst()...), err
+	if v.Type() == 'l' {
+		return begin(Void, v.Lst()...), err
+	}
+	return begin(Void, v), err
 }
 
 func Exec(c Value, local *Map) (Value, error) { return executeState(c, execState{local: local}) }
@@ -605,7 +583,8 @@ LOOP:
 			}
 			comp = append(comp, Str(t))
 		case '#':
-			if s.Peek() == '|' { // #| comment |#
+			switch s.Peek() {
+			case '|': // #| comment |#
 				for s.Scan(); ; {
 					if current, next := s.Scan(), s.Peek(); current == scanner.EOF {
 						return Void, fmt.Errorf("incomplete comment block")
@@ -614,7 +593,14 @@ LOOP:
 						break
 					}
 				}
-			} else {
+			case '/': // #/char
+				s.Scan()
+				r, l := utf8.DecodeRuneInString(scanToDelim(s))
+				if l == 0 {
+					return Void, fmt.Errorf("invalid char")
+				}
+				comp = append(comp, Num(float64(r)))
+			default:
 				comp = append(comp, Atm("#"+scanToDelim(s), (s.Pos().Line), (s.Pos().Column)))
 			}
 		case ';':
@@ -642,7 +628,9 @@ LOOP:
 			comp = append(comp, Lst(Atm(ifstr(tok == '\'', "quote", ifstr(tok == '`', "quasiquote", "unquote")), 0, 0), c))
 		default:
 			text := s.TokenText() + scanToDelim(s)
-			if v, ok := strconv.ParseFloat(text, 64); ok == nil || tok == scanner.Float || tok == scanner.Int {
+			if v, ok := strconv.ParseInt(text, 0, 64); ok == nil || tok == scanner.Int {
+				comp = append(comp, Num(float64(v)))
+			} else if v, ok := strconv.ParseFloat(text, 64); ok == nil || tok == scanner.Float {
 				comp = append(comp, Num(v))
 			} else {
 				comp = append(comp, Atm(text, (s.Pos().Line), (s.Pos().Column)))
@@ -922,7 +910,7 @@ func (v *Value) _itfptr() *interface{} { return (*interface{})(unsafe.Pointer(v)
 func (v Value) IsVoid() bool           { return v == Value{} }
 func (v Value) IsTrue() bool           { return v.flag == -'b' && v.val == 1 }
 
-//go:nosplit
+// Type returns the type of Value: 'b'ool, 'n'umber, 'l'ist, 's'tring, 'f'unc, 'a'tom, 'i'nterface, 'v'oid
 func (v Value) Type() byte {
 	switch v.flag {
 	case -'n', -'b', -'l', -'d', -'q', -'f', -'s', -'a':
@@ -986,7 +974,7 @@ func (v Value) Val() interface{} {
 	case 's':
 		return vs
 	case 'l', 'd':
-		return v._flatten() // TODO
+		return v._flatten()
 	}
 	switch v.Type() {
 	case 'b':
@@ -1035,7 +1023,7 @@ func (v Value) FunCall(a ...Value) (Value, error) {
 	for i := range a {
 		expr[i+1] = _Vquote(a[i])
 	}
-	return Exec(Lst(expr...), &Map{})
+	return Exec(Lst(expr...), nil)
 }
 
 //go:nosplit
