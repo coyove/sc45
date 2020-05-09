@@ -21,7 +21,7 @@ var DefaultStdout io.Writer = os.Stdout
 func (s *State) InMap(i int) *Map {
 	vv, _ := s.In(i).Itf()
 	v, ok := vv.(*Map)
-	s.assert(ok || s.panic("invalid argument at %d, expect map, got %v", i, s.Args[i]))
+	s.assert(ok || s.panic("invalid argument #%d, expect map, got %v", i, s.Args[i]))
 	return v
 }
 
@@ -158,11 +158,11 @@ func init() {
 			var name, val Value
 			if a, ok := pl[i].Atm(); ok {
 				name, val = pl[i], Empty
-				if strings.HasSuffix(a, "...") && len(a) > 3 {
+				if strings.HasSuffix(a, "...") {
 					// Special case: "name..." to catch the rest arguments
 					body = append(body, VList(
 						s.Caller.DupAtom("define"),
-						s.Caller.DupAtom(a[:len(a)-3]),
+						s.Caller.DupAtom(ifstr(len(a) == 3, "...", a[:len(a)-3])),
 						VList(s.Caller.DupAtom("skip"), VNumber(float64(i)), s.Caller.DupAtom(tmpvar)),
 					))
 					continue
@@ -186,12 +186,12 @@ func init() {
 		body = append(body, s.Args[1:]...)
 		s.Out = VList(body...)
 	})
-	predefined.Install("(vector-len a)", func(s *State) {
-		s.Out = VNumber(float64((reflect.ValueOf(s.In(0).GoValue()).Len())))
-	})
-	predefined.Install("(vector-null? a)", func(s *State) {
-		s.Out = VBool(reflect.ValueOf(s.In(0).GoValue()).Len() == 0)
-	})
+	predefined.Install("(vector-bytes n)", func(s *State) { s.Out = VInterface(make([]byte, int(s.InNumber(0)))) })
+	predefined.Install("(vector-strings n)", func(s *State) { s.Out = VInterface(make([]string, int(s.InNumber(0)))) })
+	predefined.Install("(vector-ints n)", func(s *State) { s.Out = VInterface(make([]int, int(s.InNumber(0)))) })
+	predefined.Install("(vector-int64s n)", func(s *State) { s.Out = VInterface(make([]int64, int(s.InNumber(0)))) })
+	predefined.Install("(vector-len a)", func(s *State) { s.Out = VNumber(float64((reflect.ValueOf(s.In(0).GoValue()).Len()))) })
+	predefined.Install("(vector-null? a)", func(s *State) { s.Out = VBool(reflect.ValueOf(s.In(0).GoValue()).Len() == 0) })
 	predefined.Install("(vector-nth vector n)", func(s *State) {
 		rm := reflect.ValueOf(s.In(0).GoValue())
 		s.Out = Val(rm.Index(int(s.InNumber(1))).Interface())
@@ -263,7 +263,7 @@ func init() {
 		l, r, fn, i := s.InList(1), []Value{}, s.InGoFunc(0), 0
 		for h, ok := Head(l, nil); ok; h, ok = Head(l, nil) {
 			v, err := fn(h)
-			s.assert(err == nil || s.panic("map: error at element %d: %v", i, err))
+			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
 			r = append(r, v)
 			l, _ = Tail(l)
 			i++
@@ -275,7 +275,7 @@ func init() {
 		var err error
 		for h, ok := Head(l, nil); ok; h, ok = Head(l, nil) {
 			left, err = fn(left, h)
-			s.assert(err == nil || s.panic("reduce: error at element %d: %v", i, err))
+			s.assert(err == nil || s.panic("reduce: error at element #%d: %v", i, err))
 			l, _ = Tail(l)
 			i++
 		}
@@ -286,7 +286,7 @@ func init() {
 		var err error
 		for l, ok := Last(rl, nil); ok; l, ok = Last(rl, nil) {
 			right, err = fn(right, l)
-			s.assert(err == nil || s.panic("reduce-right: error at element %d: %v", i, err))
+			s.assert(err == nil || s.panic("reduce-right: error at element #%d: %v", i, err))
 			rl, _ = Init(rl)
 			i++
 		}
@@ -378,17 +378,14 @@ func init() {
 	predefined.Install("(regex/find regexp text count)", func(s *State) {
 		s.Out = ValRec(regexp.MustCompile(s.InString(0)).FindAllStringSubmatch(s.InString(1), int(s.InNumber(2))))
 	})
-	predefined.Install("(json any 'c?)",
-		func(s *State) {
-			var buf []byte
-			var err error
-			if len(s.Args) == 2 && s.InAtom(1, "c") == "c" {
-				buf, err = json.Marshal(s.In(0))
-			} else {
-				buf, err = json.MarshalIndent(s.In(0), "", "  ")
-			}
-			s.Out = errorOrValue(string(buf), err)
-		})
+	predefined.Install("(json a)", func(s *State) {
+		buf, err := json.MarshalIndent(s.In(0), "", "  ")
+		s.Out = errorOrValue(string(buf), err)
+	})
+	predefined.Install("(json-c a)", func(s *State) {
+		buf, err := json.Marshal(s.In(0))
+		s.Out = errorOrValue(string(buf), err)
+	})
 	predefined.Install("(json-parse string)",
 		func(s *State) {
 			text := strings.TrimSpace(s.InString(0))
@@ -399,13 +396,19 @@ func init() {
 				} else {
 					s.Out = ValRec(m)
 				}
-			}
-			if strings.HasPrefix(text, "[") {
+			} else if strings.HasPrefix(text, "[") {
 				m := []interface{}{}
 				if err := json.Unmarshal([]byte(text), &m); err != nil {
 					s.Out = VInterface(err)
 				} else {
 					s.Out = ValRec(m)
+				}
+			} else {
+				var m interface{}
+				if err := json.Unmarshal([]byte(text), &m); err != nil {
+					s.Out = VInterface(err)
+				} else {
+					s.Out = Val(m)
 				}
 			}
 		})

@@ -134,7 +134,7 @@ func TestOne(t *testing.T) {
 	 			(if (== false (cb (car s) idx )) ()
 	 				(ForeachImpl (cdr s) cb (+ idx 1)))))))] (ForeachImpl s cb 0)) ;;`)
 
-	assert(`(define Counter 0) (Foreach (make/list 1000000) (lambda (v) (begin (set! Counter (+ Counter 1)) (assert (== Counter v`)
+	// assert(`(define Counter 0) (Foreach (make/list 1000000) (lambda (v) (begin (set! Counter (+ Counter 1)) (assert (== Counter v`)
 	assert(`
 	 	 // let's play closure
 	 	 (define build-incr (lambda (start)
@@ -322,6 +322,7 @@ ALL:
 	}
 
 	list2 := list
+	list3 := list
 
 	if x := Length(list); x != count {
 		t.Fatal("length:", x, count, list)
@@ -345,4 +346,11 @@ ALL:
 		list, _ = Init(list)
 		i--
 	}
+
+	_range(0, list3, func(idx int, v Value) {
+		n, _ := v.Num()
+		if int(n) != idx {
+			t.Fatal(v, idx)
+		}
+	})
 }
