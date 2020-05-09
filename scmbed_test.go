@@ -38,7 +38,7 @@ func TestOne(t *testing.T) {
 		} else {
 			av, _ := a[0].Num()
 			a[0] = VNumber(av + v)
-			s.Out = VList(a...)
+			s.Out = VList(append([]Value{}, a...)...)
 		}
 	})
 	// it.Install("callee", "", func(v int64) int64 { return v * 10 })

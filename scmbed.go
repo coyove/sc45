@@ -57,6 +57,10 @@ type (
 		callAtom     *Value
 		local        *Map
 		macro, quasi bool
+		args         struct { // all go native calls share the same stack: args.list, each used region is identified by args.start
+			start int
+			list  *[]Value
+		}
 	}
 	assertable struct {
 		err error
@@ -257,7 +261,7 @@ func init() {
 		}
 	})
 	predefined.Install("(atom string)", func(s *State) { s.Out = VAtom(s.InString(0), 0, 0) })
-	predefined.Install("(list v1 v2 ... vn)", func(s *State) { s.Out = VList(s.Args...) })
+	predefined.Install("(list v1 v2 ... vn)", func(s *State) { s.Out = VList(append([]Value{}, s.Args...)...) })
 	predefined.Install("(append list list2)", func(s *State) { s.Out = VList(_Vddd(s.InList(0)...), _Vddd(s.InList(1)...)) })
 	predefined.Install("(add list a)", func(s *State) { s.Out = VList(_Vddd(s.InList(0)...), s.In(1)) })
 	predefined.Install("(cons a list)", func(s *State) { s.Out = VList(s.In(0), _Vddd(s.InList(1)...)) })
@@ -450,7 +454,6 @@ func (m *Map) Copy() *Map {
 }
 
 func (it *Interpreter) exec(expr Value, state execState) Value {
-	var reuseArgs []Value
 	if state.quasi {
 		if expr.Type() == 'l' && expr._len() > 0 {
 			if a, _ := expr._at(0).Atm(); a == "unquote" {
@@ -583,13 +586,19 @@ TAIL_CALL:
 		}
 
 		s := State{Map: state.local, It: it, Out: Void, Caller: c._at(0)}
-		reuseArgs = reuseArgs[:0]
-		for i := 1; i < c._len(); i++ {
-			reuseArgs = append(reuseArgs, it.exec(c._at(i), state))
+		if state.args.list == nil {
+			state.args.list = new([]Value)
 		}
-		s.Args = reuseArgs
+
+		args := state.args
+		for i := 1; i < c._len(); i++ {
+			state.args.start = len(*args.list)
+			*args.list = append(*args.list, it.exec(c._at(i), state))
+		}
+		s.Args = (*args.list)[args.start:]
 		*state.callAtom = c._at(0)
 		cc.f(&s)
+		*args.list = (*args.list)[:args.start]
 		return s.Out
 	}
 }
