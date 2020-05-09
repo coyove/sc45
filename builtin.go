@@ -78,7 +78,7 @@ func (it *Interpreter) InstallGo(name string, fn interface{}) {
 
 func (it *Interpreter) Funcs() map[string]*Func {
 	p := map[string]*Func{}
-	for k, v := range it.Globals.Unsafe() {
+	for k, v := range it.Globals.m {
 		if v.Type() == 'f' {
 			p[k] = v.Fun()
 		}
@@ -215,9 +215,9 @@ func init() {
 		s.Out = Val(r.Interface())
 	})
 	predefined.Install("(vector-foreach vector callback)", func(s *State) {
-		rl, fn := reflect.ValueOf(s.In(0).Val()), s.InFunc(1)
+		rl, fn := reflect.ValueOf(s.In(0).Val()), s.Int(1, 'f')
 		for i := 0; i < rl.Len(); i++ {
-			fn(Num(float64(i)), Val(rl.Index(i).Interface()))
+			fn.FunCall(Num(float64(i)), Val(rl.Index(i).Interface()))
 		}
 	})
 	predefined.Install("(define-record 'name 'field1 ... 'fieldn)", func(s *State) {
@@ -258,9 +258,9 @@ func init() {
 		}, sig: "(" + name + "-new ...)"}))
 	})
 	predefined.Install("(map fn list)", func(s *State) {
-		l, r, fn, i := s.Int(1, 'l').Lst(), []Value{}, s.InFunc(0), 0
+		l, r, fn, i := s.Int(1, 'l').Lst(), []Value{}, s.Int(0, 'f'), 0
 		for h, ok := Head(l, nil); ok; h, ok = Head(l, nil) {
-			v, err := fn(h)
+			v, err := fn.FunCall(h)
 			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
 			r = append(r, v)
 			l, _ = Tail(l)
@@ -269,10 +269,10 @@ func init() {
 		s.Out = Lst(r...)
 	})
 	predefined.Install("(reduce fn v list)", func(s *State) {
-		l, left, fn, i := s.Int(2, 'l').Lst(), s.In(1), s.InFunc(0), 0
+		l, left, fn, i := s.Int(2, 'l').Lst(), s.In(1), s.Int(0, 'f'), 0
 		var err error
 		for h, ok := Head(l, nil); ok; h, ok = Head(l, nil) {
-			left, err = fn(left, h)
+			left, err = fn.FunCall(left, h)
 			s.assert(err == nil || s.panic("reduce: error at element #%d: %v", i, err))
 			l, _ = Tail(l)
 			i++
@@ -280,10 +280,10 @@ func init() {
 		s.Out = left
 	})
 	predefined.Install("(reduce-right fn v list)", func(s *State) {
-		i, rl, right, fn := 0, s.Int(2, 'l').Lst(), s.In(1), s.InFunc(0)
+		i, rl, right, fn := 0, s.Int(2, 'l').Lst(), s.In(1), s.Int(0, 'f')
 		var err error
 		for l, ok := Last(rl, nil); ok; l, ok = Last(rl, nil) {
-			right, err = fn(right, l)
+			right, err = fn.FunCall(right, l)
 			s.assert(err == nil || s.panic("reduce-right: error at element #%d: %v", i, err))
 			rl, _ = Init(rl)
 			i++
@@ -480,7 +480,7 @@ func init() {
 					case token.LOR:
 						op = "or"
 					}
-					m, _ := s.It.UnwrapMacro([]Value{Atm(op, 0, 0), do(e.X), do(e.Y)})
+					m, _ := UnwrapMacro([]Value{Atm(op, 0, 0), do(e.X), do(e.Y)}, s.Map)
 					return m
 				case *ast.BasicLit:
 					switch e.Kind {

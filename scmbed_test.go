@@ -72,9 +72,9 @@ func TestOne(t *testing.T) {
 	})
 	it.Install("(range)", func(s *State) {
 		m := s.InMap(0)
-		f := s.InFunc(1)
+		f := s.Int(1, 'f')
 		for k, v := range m {
-			err, ok := f(Str(k), v)
+			err, ok := f.FunCall(Str(k), v)
 			log.Println("===", err, ok)
 			if !err.IsTrue() {
 				s.Out = v
@@ -92,7 +92,6 @@ func TestOne(t *testing.T) {
 	it.Install("#(iff)", func(s *State) {
 		s.Out = s.In(1)
 	})
-	assert(`(lambda (a b) (+ a b)`)
 	assert(`(if #f (+ 1 #| inline || comment (assert false) #|#  2 3.5) (lambda (a b) ())`)
 	assert(`(assert ( [lambda* (a b) (assert (= a 1)) (null? b)] 1) `)
 	assert(`( [lambda* (a [b (+ a 1)] ) (assert (= a 1)) (assert (= b 2))] 1) `)

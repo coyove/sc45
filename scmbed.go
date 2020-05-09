@@ -44,7 +44,6 @@ type (
 	State struct {
 		*Map
 		assertable
-		It          *Interpreter
 		Args        []Value
 		Out, Caller Value
 	}
@@ -240,15 +239,15 @@ func init() {
 			innerbinds[i] = Lst(tmpvar, b[1])
 			outerbinds[i] = Lst(b[0], Void)
 		}
-		inner, _ := s.It.UnwrapMacro(Lst(let, Lst(innerbinds...), _Vddd(innersets...), _Vddd(s.Args[1:]...))._flatten())
-		outer, _ := s.It.UnwrapMacro([]Value{let, Lst(outerbinds...), inner})
+		inner, _ := UnwrapMacro(Lst(let, Lst(innerbinds...), _Vddd(innersets...), _Vddd(s.Args[1:]...))._flatten(), s.Map)
+		outer, _ := UnwrapMacro([]Value{let, Lst(outerbinds...), inner}, s.Map)
 		s.Out = outer
 	})
 	predefined.Install("(eval expr)", func(s *State) {
-		s.Out = errorOrValue(s.It.executeState(s.In(0), execState{local: s.Map}))
+		s.Out = errorOrValue(executeState(s.In(0), execState{local: s.Map}))
 	})
 	predefined.Install("(parse expr-string)", func(s *State) {
-		s.Out = errorOrValue(s.It.parse(s.Int(0, 's').Str()))
+		s.Out = errorOrValue(parse(s.Int(0, 's').Str(), s.Map))
 	})
 	predefined.Install("(null? a)", func(s *State) { s.Out = Bln(IsEmpty(s.In(0))) })
 	predefined.Install("(set-car! list value)", func(s *State) {
@@ -297,17 +296,17 @@ func init() {
 	predefined.Install("(pcall handler function)", func(s *State) {
 		defer func() {
 			if r := recover(); r != nil {
-				if _, ok := s.In(0).Val().(*Func); !ok {
+				if s.In(0).Type() != 'f' {
 					s.Out = Val(r)
 				} else {
-					s.Out = errorOrValue(s.InFunc(0)(Val(r)))
+					s.Out = errorOrValue(s.Int(0, 'f').FunCall(Val(r)))
 				}
 			}
 		}()
-		s.Out = s.It.exec(Lst(_Vquote(s.In(1))), execState{callAtom: &s.Out, local: s.Map})
+		s.Out = __exec(Lst(_Vquote(s.In(1))), execState{callAtom: &s.Out, local: s.Map})
 	})
 	predefined.Install("(apply function (list a1 a2 ... an))", func(s *State) {
-		v, err := s.InFunc(0)(s.Int(1, 'l')._flatten()...)
+		v, err := s.Int(0, 'f').FunCall(s.Int(1, 'l')._flatten()...)
 		s.assert(err == nil || s.panic("apply panic: %v", err))
 		s.Out = v
 	})
@@ -328,9 +327,9 @@ func (it *Interpreter) Install(name string, f func(*State)) *Func {
 	if strings.HasPrefix(fn.sig, "#") {
 		fn.sig, fn.macro = fn.sig[1:], true
 	}
-	it.assert(strings.HasPrefix(fn.sig, "(") && strings.HasSuffix(fn.sig, ")") ||
-		it.panic("expect function name format: \"(name ...)\" or \"#(name ...)\", not: %q", fn.sig))
-	name = fn.sig[1:strings.IndexAny(fn.sig, " )")]
+	if strings.HasPrefix(fn.sig, "(") && strings.HasSuffix(fn.sig, ")") {
+		name = fn.sig[1:strings.IndexAny(fn.sig, " )")]
+	}
 	it.Globals.Store(name, Fun(fn))
 	return fn
 }
@@ -352,17 +351,6 @@ func (s *State) Int(i int, t byte) Value {
 	s.assert(i >= 0 && i < len(s.Args) || s.panic("too few arguments, expect at least %d", i+1))
 	s.assert(s.Args[i].Type() == t || s.panic("invalid argument #%d, expect '%v', got %v", i, string(t), s.Args[i]))
 	return s.Args[i]
-}
-
-func (s *State) InFunc(i int) func(...Value) (Value, error) {
-	return func(a ...Value) (Value, error) {
-		expr := make([]Value, len(a)+1)
-		expr[0] = _Vquote(s.Int(i, 'f'))
-		for i := range a {
-			expr[i+1] = _Vquote(a[i])
-		}
-		return s.It.Exec(Lst(expr...), &Map{parent: s.Map})
-	}
 }
 
 func (m *Map) find(k string) (Value, *Map) {
@@ -404,8 +392,6 @@ func (m *Map) Delete(k string) (Value, bool) {
 
 func (m *Map) Len() int { return len(m.m) }
 
-func (m *Map) Unsafe() map[string]Value { return m.m }
-
 func (m *Map) Copy() *Map {
 	m2 := &Map{m: make(map[string]Value, len(m.m)), parent: m.parent}
 	for k, v := range m.m {
@@ -414,19 +400,19 @@ func (m *Map) Copy() *Map {
 	return m2
 }
 
-func (it *Interpreter) exec(expr Value, state execState) Value {
+func __exec(expr Value, state execState) Value {
 	if state.quasi {
 		if expr.Type() == 'l' && expr._len() > 0 {
 			if x := expr._at(0); x.Type() == 'a' && x.Str() == "unquote" {
 				state.assert(expr._len() == 2 || state.panic("invalid unquote syntax"))
 				state.quasi = false
-				v := it.exec(expr._at(1), state)
+				v := __exec(expr._at(1), state)
 				state.quasi = true
 				return v
 			}
 			e := make([]Value, expr._len())
 			for i := range e {
-				e[i] = it.exec(expr._at(i), state)
+				e[i] = __exec(expr._at(i), state)
 			}
 			return Lst(e...)
 		}
@@ -456,7 +442,7 @@ TAIL_CALL:
 	switch va, _ := c._at(0)._atm(); va {
 	case "if":
 		state.assert(c._len() >= 3 || state.panic("invalid if syntax"))
-		if it.exec(c._at(1), state).IsTrue() {
+		if __exec(c._at(1), state).IsTrue() {
 			expr = c._at(2) // execute true-branch
 			goto TAIL_CALL
 		}
@@ -465,7 +451,7 @@ TAIL_CALL:
 				expr = c._at(i)
 				goto TAIL_CALL
 			}
-			it.exec(c._at(i), state)
+			__exec(c._at(i), state)
 		}
 		return Void
 	case "lambda", "lambda#":
@@ -493,7 +479,7 @@ TAIL_CALL:
 	case "quasiquote":
 		state.assert(c._len() == 2 || state.panic("invalid quasiquote syntax"))
 		state.quasi = true
-		v := it.exec(c._at(1), state)
+		v := __exec(c._at(1), state)
 		state.quasi = false
 		return v
 	case "unquote":
@@ -503,17 +489,17 @@ TAIL_CALL:
 		x := c._at(1).Str()
 		_, m := state.local.find(x)
 		state.assert(m != nil || state.panic("set!: unbound %s", x))
-		m.set(x, it.exec(c._at(2), state))
+		m.set(x, __exec(c._at(2), state))
 		return Void
 	case "define":
 		state.assert(c._len() == 3 && c._at(1).Type() == 'a' || state.panic("invalid define syntax"))
 		x := c._at(1).Str()
 		_, ok := state.local.m[x]
 		state.assert(!ok || state.panic("re-define %s", x))
-		state.local.set(x, it.exec(c._at(2), state))
+		state.local.set(x, __exec(c._at(2), state))
 		return Void
 	default:
-		fn := it.exec(c._at(0), state)
+		fn := __exec(c._at(0), state)
 		state.assert(fn.Type() == 'f' || state.panic("invalid function: %v", c._at(0)))
 		cc := fn.Fun()
 		state.assert(!cc.macro || state.macro || state.panic("mis-calling macro: %v", c._at(0)))
@@ -523,19 +509,19 @@ TAIL_CALL:
 			if !cc.varg {
 				for i, name := range cc.nargs {
 					state.assert(i+1 < c._len() || state.panic("too few arguments, expect at least %d", i+1))
-					m.set(name, it.exec(c._at(i+1), state))
+					m.set(name, __exec(c._at(i+1), state))
 				}
 				if c._len()-1 > len(cc.nargs) {
 					values := make([]Value, 0, c._len())
 					for i := len(cc.nargs) + 1; i < c._len(); i++ {
-						values = append(values, it.exec(c._at(i), state))
+						values = append(values, __exec(c._at(i), state))
 					}
 					m.set("\x00rest", Lst(values...))
 				}
 			} else {
 				values := make([]Value, 0, c._len())
 				for i := 1; i < c._len(); i++ {
-					values = append(values, it.exec(c._at(i), state))
+					values = append(values, __exec(c._at(i), state))
 				}
 				m.set(cc.nargs[0], Lst(values...))
 				m.set("\x00rest", Lst(values...))
@@ -545,7 +531,7 @@ TAIL_CALL:
 			goto TAIL_CALL
 		}
 
-		s := State{Map: state.local, It: it, Out: Void, Caller: c._at(0)}
+		s := State{Map: state.local, Out: Void, Caller: c._at(0)}
 		if state.args.list == nil {
 			state.args.list = new([]Value)
 		}
@@ -553,7 +539,7 @@ TAIL_CALL:
 		args := state.args
 		for i := 1; i < c._len(); i++ {
 			state.args.start = len(*args.list)
-			*args.list = append(*args.list, it.exec(c._at(i), state))
+			*args.list = append(*args.list, __exec(c._at(i), state))
 		}
 		s.Args = (*args.list)[args.start:]
 		*state.callAtom = c._at(0)
@@ -563,7 +549,7 @@ TAIL_CALL:
 	}
 }
 
-func (it *Interpreter) parse(tmpl string) (Value, error) {
+func parse(tmpl string, macroEvalEnv *Map) (Value, error) {
 	var s scanner.Scanner
 	var err error
 	s.Init(strings.NewReader(tmpl))
@@ -575,18 +561,16 @@ func (it *Interpreter) parse(tmpl string) (Value, error) {
 		}
 		err = fmt.Errorf("parse: %s at %d:%d", msg, pos.Line, pos.Column)
 	}
-	v, perr := it.scan(&s, false)
+	v, perr := scan(&s, macroEvalEnv, false)
 	if perr != nil {
 		return Void, fmt.Errorf("parse: %v at %d:%d", perr, s.Pos().Line, s.Pos().Column)
 	}
 	return begin(Void, v.Lst()...), err
 }
 
-func (it *Interpreter) Exec(c Value, local *Map) (Value, error) {
-	return it.executeState(c, execState{local: local})
-}
+func Exec(c Value, local *Map) (Value, error) { return executeState(c, execState{local: local}) }
 
-func (it *Interpreter) executeState(c Value, state execState) (result Value, err error) {
+func executeState(c Value, state execState) (result Value, err error) {
 	var callAtom Value
 	defer func() {
 		if r := recover(); r != nil {
@@ -597,18 +581,18 @@ func (it *Interpreter) executeState(c Value, state execState) (result Value, err
 		}
 	}()
 	state.callAtom = &callAtom
-	return it.exec(c, state), nil
+	return __exec(c, state), nil
 }
 
 func (it *Interpreter) Run(tmpl string) (result interface{}, err error) {
-	c, err := it.parse(tmpl)
+	c, err := parse(tmpl, it.Globals)
 	if err != nil {
 		return nil, err
 	}
-	return it.Exec(c, it.Globals)
+	return Exec(c, it.Globals)
 }
 
-func (it *Interpreter) scan(s *scanner.Scanner, scanOne bool) (Value, error) {
+func scan(s *scanner.Scanner, macroEvalEnv *Map, scanOne bool) (Value, error) {
 	var comp []Value
 LOOP:
 	for tok := s.Scan(); tok != scanner.EOF; tok = s.Scan() {
@@ -640,7 +624,7 @@ LOOP:
 				}
 			}
 		case '(', '[':
-			c, err := it.scan(s, false)
+			c, err := scan(s, macroEvalEnv, false)
 			if err != nil {
 				return Value{}, err
 			}
@@ -648,7 +632,7 @@ LOOP:
 		case ')', ']':
 			break LOOP
 		case '\'', '`', ',':
-			c, err := it.scan(s, true)
+			c, err := scan(s, macroEvalEnv, true)
 			if err != nil {
 				return Void, err
 			}
@@ -668,10 +652,10 @@ LOOP:
 			return comp[0], nil
 		}
 	}
-	return it.UnwrapMacro(comp)
+	return UnwrapMacro(comp, macroEvalEnv)
 }
 
-func (it *Interpreter) UnwrapMacro(comp []Value) (Value, error) {
+func UnwrapMacro(comp []Value, local *Map) (Value, error) {
 	if len(comp) == 0 {
 		return Lst(), nil
 	}
@@ -691,14 +675,15 @@ func (it *Interpreter) UnwrapMacro(comp []Value) (Value, error) {
 				Lst(x[1:]...)}, comp[2:]...)...)), nil
 	}
 
-	m, _ := it.Globals.Load(va)
+	m, _ := local.Load(va)
 	if !(m.Type() == 'f' && m.Fun().macro) {
 		return Lst(comp...), nil
 	}
+	comp[0] = _Vquote(m)
 	for i := 1; i < len(comp); i++ {
 		comp[i] = _Vquote(comp[i])
 	}
-	v, err := it.executeState(Lst(comp...), execState{local: it.Globals, macro: true})
+	v, err := executeState(Lst(comp...), execState{local: local, macro: true})
 	if err != nil {
 		return Void, err
 	}
@@ -1043,7 +1028,15 @@ func (v Value) Bln() bool       { return v.val == 1 }
 func (v Value) Num() float64    { return v.val }
 func (v Value) Str() string     { return *(*string)(v.ptr) }
 func (v Value) Lst() []Value    { return *(*[]Value)(v.ptr) }
-func (v Value) Pos() (int, int) { x := math.Float64bits(v.val); return int(x >> 32), int(x) }
+func (v Value) Pos() (int, int) { x := math.Float64bits(v.val); return int(x >> 32), int(x << 32 >> 32) }
+func (v Value) FunCall(a ...Value) (Value, error) {
+	expr := make([]Value, len(a)+1)
+	expr[0] = _Vquote(v)
+	for i := range a {
+		expr[i+1] = _Vquote(a[i])
+	}
+	return Exec(Lst(expr...), &Map{})
+}
 
 //go:nosplit
 func (v Value) _at(i int) Value {
