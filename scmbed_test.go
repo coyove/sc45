@@ -73,7 +73,7 @@ func TestOne(t *testing.T) {
 	it.Install("(range)", func(s *State) {
 		m := s.InMap(0)
 		f := s.InGoFunc(1)
-		for k, v := range m.Unsafe() {
+		for k, v := range m {
 			err, ok := f(VString(k), v)
 			log.Println("===", err, ok)
 			if !err.IsTrue() {
@@ -92,6 +92,7 @@ func TestOne(t *testing.T) {
 	it.Install("#(iff)", func(s *State) {
 		s.Out = s.In(1)
 	})
+	assert(`(lambda (a b) (+ a b)`)
 	assert(`(if #f (+ 1 #| inline || comment (assert false) #|#  2 3.5) (lambda (a b) ())`)
 	assert(`(assert ( [lambda* (a b) (assert (= a 1)) (null? b)] 1) `)
 	assert(`( [lambda* (a [b (+ a 1)] ) (assert (= a 1)) (assert (= b 2))] 1) `)
@@ -263,7 +264,7 @@ func TestOne(t *testing.T) {
 	assert(`(assert (<= 1 2 2 4`)
 	assert(`(assert (>= 10 2 2 1`)
 	// assert(`(assert (and (is 'void (car '())) (is 'void '()`)
-	assert(`(set! a 10) (assert (= a (eval "(+ 2) a"`)
+	assert(`(let ((a 1)) (assert (= 2 (eval '(+ a 1`)
 	assert(`(set! a (map-new "a" 1)) (map-set! a "a" 2) (assert (= (map-get a "a") 2)`)
 }
 

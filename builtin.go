@@ -18,9 +18,9 @@ import (
 
 var DefaultStdout io.Writer = os.Stdout
 
-func (s *State) InMap(i int) *Map {
+func (s *State) InMap(i int) map[string]Value {
 	vv, _ := s.In(i).Itf()
-	v, ok := vv.(*Map)
+	v, ok := vv.(map[string]Value)
 	s.assert(ok || s.panic("invalid argument #%d, expect map, got %v", i, s.Args[i]))
 	return v
 }
@@ -112,19 +112,19 @@ func init() {
 	predefined.Install("(list-depth list)", func(s *State) { s.Out = Val(maxdepth(s.InList(0))) })
 	predefined.Install("(go-value-wrap a)", func(s *State) { s.Out = ValRec(s.In(0).GoValue()) })
 	predefined.Install("(map-new key0 value0 key1 value1 ...)", func(s *State) {
-		m := &Map{}
+		m := map[string]Value{}
 		for i := 0; i < len(s.Args); i += 2 {
-			m.set(s.InString(i), s.In(i+1))
+			m[s.InString(i)] = s.In(i + 1)
 		}
 		s.Out = VInterface(m)
 	})
-	predefined.Install("(map-set! map key value)", func(s *State) { s.InMap(0).set(s.InString(1), s.In(2)) })
-	predefined.Install("(map-delete! map key)", func(s *State) { s.Out, _ = s.InMap(0).Delete(s.InString(1)) })
-	predefined.Install("(map-get map key)", func(s *State) { s.Out, _ = s.InMap(0).Load(s.InString(1)) })
-	predefined.Install("(map-contains map key)", func(s *State) { _, ok := s.InMap(0).Load(s.InString(1)); s.Out = VBool(ok) })
+	predefined.Install("(map-set! map key value)", func(s *State) { s.InMap(0)[s.InString(1)] = s.In(2) })
+	predefined.Install("(map-delete! map key)", func(s *State) { delete(s.InMap(0), s.InString(1)) })
+	predefined.Install("(map-get map key)", func(s *State) { s.Out = s.InMap(0)[s.InString(1)] })
+	predefined.Install("(map-contains map key)", func(s *State) { _, ok := s.InMap(0)[s.InString(1)]; s.Out = VBool(ok) })
 	predefined.Install("(map-keys map)", func(s *State) {
-		ret := make([]Value, 0, s.InMap(0).Len())
-		for i := range s.InMap(0).Unsafe() {
+		ret := make([]Value, 0, len(s.InMap(0)))
+		for i := range s.InMap(0) {
 			ret = append(ret, VString(i))
 		}
 		s.Out = VList(ret...)

@@ -138,7 +138,6 @@ func init() {
 	})
 	predefined.Globals.Store("=", predefined.Globals.m["=="])
 	predefined.Install("(!= a a)", func(s *State) { s.Out = VBool(!s.In(0).Equals(s.In(1))) })
-	predefined.Globals.Store("<>", predefined.Globals.m["!="])
 	predefined.Install("(< a a...)", func(s *State) {
 		for i, _ := 1, s.In(0); i < len(s.Args); i++ {
 			if !itfLess(s, s.Args[i-1], i) {
@@ -164,7 +163,7 @@ func init() {
 		s.Out = VList(s.Caller.DupAtom("not"), VList(append([]Value{s.Caller.DupAtom("<")}, s.Args...)...))
 	})
 	predefined.Install("(not bool)", func(s *State) { s.Out = VBool(!s.In(0).IsTrue()) })
-	predefined.Install("(+ num_str num_str...)", func(s *State) {
+	predefined.Install("(+ num-str num-str...)", func(s *State) {
 		s.Out = s.In(0)
 		switch vn, vs, _, vl, vtype := s.Out._value(); vtype {
 		case 'n':
@@ -249,7 +248,12 @@ func init() {
 		outer, _ := s.It.UnwrapMacro([]Value{let, VList(outerbinds...), inner})
 		s.Out = outer
 	})
-	predefined.Install("(eval string)", func(s *State) { s.Out = errorOrValue(s.It.Run(s.InString(0))) })
+	predefined.Install("(eval expr)", func(s *State) {
+		s.Out = errorOrValue(s.It.executeState(s.In(0), execState{local: s.Map}))
+	})
+	predefined.Install("(parse expr-string)", func(s *State) {
+		s.Out = errorOrValue(s.It.parse(s.InString(0)))
+	})
 	predefined.Install("(null? a)", func(s *State) { s.Out = VBool(IsEmpty(s.In(0))) })
 	predefined.Install("(set-car! list value)", func(s *State) {
 		_, ok := Head(s.InList(0), func(Value) Value { return s.In(1) })
@@ -331,7 +335,8 @@ func (it *Interpreter) Install(name string, f func(*State)) *Func {
 	}
 	it.assert(strings.HasPrefix(fn.sig, "(") && strings.HasSuffix(fn.sig, ")") ||
 		it.panic("expect function name format: \"(name ...)\" or \"#(name ...)\", not: %q", fn.sig))
-	it.Globals.Store(fn.sig[1:strings.IndexAny(fn.sig, " )")], VFunc(fn))
+	name = fn.sig[1:strings.IndexAny(fn.sig, " )")]
+	it.Globals.Store(name, VFunc(fn))
 	return fn
 }
 
@@ -658,6 +663,7 @@ func (it *Interpreter) Run(tmpl string) (result interface{}, err error) {
 
 func (it *Interpreter) scan(s *scanner.Scanner, scanOne bool) (Value, error) {
 	var comp []Value
+LOOP:
 	for tok := s.Scan(); tok != scanner.EOF; tok = s.Scan() {
 		// fmt.Println(s.TokenText())
 		switch tok {
@@ -678,7 +684,7 @@ func (it *Interpreter) scan(s *scanner.Scanner, scanOne bool) (Value, error) {
 					}
 				}
 			} else {
-				comp = append(comp, VAtom("#"+scanToDelim(s), uint32(s.Pos().Line), uint32(s.Pos().Column)))
+				comp = append(comp, VAtom("#"+scanToDelim(s), uint16(s.Pos().Line), uint16(s.Pos().Column)))
 			}
 		case ';':
 			for ; ; s.Scan() {
@@ -693,7 +699,7 @@ func (it *Interpreter) scan(s *scanner.Scanner, scanOne bool) (Value, error) {
 			}
 			comp = append(comp, c)
 		case ')', ']':
-			return it.UnwrapMacro(comp)
+			break LOOP
 		case '\'', '`', ',':
 			c, err := it.scan(s, true)
 			if err != nil {
@@ -708,7 +714,7 @@ func (it *Interpreter) scan(s *scanner.Scanner, scanOne bool) (Value, error) {
 			if v, ok := strconv.ParseFloat(text, 64); ok == nil || tok == scanner.Float || tok == scanner.Int {
 				comp = append(comp, VNumber(v))
 			} else {
-				comp = append(comp, VAtom(text, uint32(s.Pos().Line), uint32(s.Pos().Column)))
+				comp = append(comp, VAtom(text, uint16(s.Pos().Line), uint16(s.Pos().Column)))
 			}
 		}
 		if scanOne && len(comp) >= 1 {
@@ -951,9 +957,9 @@ func ValRec(v interface{}) Value {
 		return VList(res...)
 	case reflect.Map:
 		if rv.Type().Key().Kind() == reflect.String { // map[string]any
-			res, iter := &Map{m: make(map[string]Value, rv.Len())}, rv.MapRange()
+			res, iter := make(map[string]Value, rv.Len()), rv.MapRange()
 			for iter.Next() {
-				res.set(iter.Key().String(), ValRec(iter.Value().Interface()))
+				res[iter.Key().String()] = ValRec(iter.Value().Interface())
 			}
 			return VInterface(res)
 		}
@@ -968,8 +974,8 @@ func VBool(v bool) Value {
 	return Value{val: 0, flag: -'b'}
 }
 
-func VAtom(v string, line, col uint32) Value {
-	return Value{flag: -'a', ptr: unsafe.Pointer(&v), val: math.Float64frombits(uint64(line)<<32 | uint64(col))}
+func VAtom(v string, line, col uint16) Value {
+	return Value{flag: -'a', ptr: unsafe.Pointer(&v), val: math.Float64frombits(uint64(line)<<16 | uint64(col))}
 }
 
 func VString(v string) (vs Value)        { return Value{flag: -'s', ptr: unsafe.Pointer(&v)} }
@@ -1109,9 +1115,9 @@ func (v Value) Str() (a string, ok bool) {
 	return
 }
 
-func (v Value) Pos() (uint32, uint32, bool) {
+func (v Value) Pos() (uint16, uint16, bool) {
 	x := math.Float64bits(v.val)
-	return uint32(x >> 32), uint32(x), v.flag == -'a'
+	return uint16(x >> 16), uint16(x), v.flag == -'a'
 }
 
 func (v Value) Atm() (a string, ok bool) {
@@ -1134,6 +1140,7 @@ func (v Value) _at(i int) Value {
 	return *(*Value)(unsafe.Pointer(hdr.Data + unsafe.Sizeof(v)*uintptr(i)))
 }
 func (v Value) _len() int     { return (*reflect.SliceHeader)(v.ptr).Len }
+func (v Value) _str() string  { return *(*string)(v.ptr) }
 func (v Value) _lst() []Value { return *(*[]Value)(v.ptr) }
 func (v Value) _value() (vn float64, vs string, vq Value, vl []Value, vtype byte) {
 	switch v.flag {
