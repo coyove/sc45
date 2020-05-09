@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
-	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -346,13 +344,5 @@ ALL:
 		}
 		list, _ = Init(list)
 		i--
-	}
-}
-
-func TestLaunchWeb(t *testing.T) {
-	if x := os.Getenv("DEBUG"); x != "" {
-		it := New()
-		it.InjectDebugREPLIntopprof("debug")
-		http.ListenAndServe(x, nil)
 	}
 }

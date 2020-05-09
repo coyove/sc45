@@ -27,9 +27,9 @@ type (
 		Globals *Map
 	}
 	Value struct {
-		a float64
-		b unsafe.Pointer
-		c int
+		flag int            // interface{} 0
+		ptr  unsafe.Pointer // interface{} 1
+		val  float64
 	}
 	Func struct {
 		macro bool
@@ -450,6 +450,7 @@ func (m *Map) Copy() *Map {
 }
 
 func (it *Interpreter) exec(expr Value, state execState) Value {
+	var reuseArgs []Value
 	if state.quasi {
 		if expr.Type() == 'l' && expr._len() > 0 {
 			if a, _ := expr._at(0).Atm(); a == "unquote" {
@@ -582,9 +583,11 @@ TAIL_CALL:
 		}
 
 		s := State{Map: state.local, It: it, Out: Void, Caller: c._at(0)}
+		reuseArgs = reuseArgs[:0]
 		for i := 1; i < c._len(); i++ {
-			s.Args = append(s.Args, it.exec(c._at(i), state))
+			reuseArgs = append(reuseArgs, it.exec(c._at(i), state))
 		}
+		s.Args = reuseArgs
 		*state.callAtom = c._at(0)
 		cc.f(&s)
 		return s.Out
@@ -941,57 +944,39 @@ func ValRec(v interface{}) Value {
 
 func VBool(v bool) Value {
 	if v {
-		return Value{a: 1, c: -'b'}
+		return Value{val: 1, flag: -'b'}
 	}
-	return Value{a: 0, c: -'b'}
+	return Value{val: 0, flag: -'b'}
 }
 
-func VString(v string) (vs Value) {
-	vs.a = math.Float64frombits(0x3)
-	*(*string)(unsafe.Pointer(&vs.b)) = v
-	return
+func VAtom(v string, line, col uint32) Value {
+	return Value{flag: -'a', ptr: unsafe.Pointer(&v), val: math.Float64frombits(uint64(line)<<32 | uint64(col))}
 }
 
-func VAtom(v string, line, col uint32) (vs Value) {
-	line, col = line&0x7fffffff, col&0x7fffffff
-	vs.a = math.Float64frombits(uint64(line)<<33 | uint64(col)<<2 | 0x2)
-	*(*string)(unsafe.Pointer(&vs.b)) = v
-	return
-}
-
-func VNumber(v float64) Value        { return Value{c: -'n', a: v} }
-func VList(l ...Value) Value         { return _Vitf(l, -'l') }
-func VFunc(f *Func) Value            { return _Vitf(f, -'f') }
-func _Vddd(l ...Value) Value         { return _Vitf(l, -'d') }                        // internal use
-func _Vquote(v Value) Value          { return Value{c: -'q', b: unsafe.Pointer(&v)} } // internal use
-func VInterface(v interface{}) Value { return _Vitf(v, -'i') }
-
-func _Vitf(v interface{}, c int) (vs Value) {
-	vs.c = c
-	*vs._itfptr() = v
-	return
-}
+func VString(v string) (vs Value)        { return Value{flag: -'s', ptr: unsafe.Pointer(&v)} }
+func VList(l ...Value) Value             { return Value{flag: -'l', ptr: unsafe.Pointer(&l)} }
+func VFunc(f *Func) Value                { return Value{flag: -'f', ptr: unsafe.Pointer(f)} }
+func VNumber(v float64) Value            { return Value{flag: -'n', val: v} }
+func VInterface(i interface{}) (v Value) { *v._itfptr() = i; return }
+func _Vddd(l ...Value) Value             { return Value{flag: -'d', ptr: unsafe.Pointer(&l)} } // internal use
+func _Vquote(v Value) Value              { return Value{flag: -'q', ptr: unsafe.Pointer(&v)} } // internal use
 
 //go:nosplit
-func (v *Value) _itfptr() *interface{} {
-	return (*interface{})(unsafe.Pointer(uintptr(unsafe.Pointer(v)) + (64-strconv.IntSize)/8))
-}
-
-func (v Value) IsVoid() bool { return v == Value{} }
-func (v Value) IsTrue() bool { return v.c == -'b' && v.a == 1 }
+func (v *Value) _itfptr() *interface{} { return (*interface{})(unsafe.Pointer(v)) }
+func (v Value) IsVoid() bool           { return v == Value{} }
+func (v Value) IsTrue() bool           { return v.flag == -'b' && v.val == 1 }
 
 //go:nosplit
 func (v Value) Type() byte {
-	switch v.c {
-	case -'n', -'b', -'l', -'d', -'i', -'q', -'f':
-		return byte(-v.c)
+	switch v.flag {
+	case -'n', -'b', -'l', -'d', -'q', -'f', -'s', -'a':
+		return byte(-v.flag)
 	default:
 		if v == (Value{}) {
 			return 'v'
-		} else if x := math.Float64bits(v.a); x&0x3 == 3 {
-			return 's'
-		} else if x&0x3 == 2 {
-			return 'a'
+		}
+		if v.flag > 0 {
+			return 'i'
 		}
 	}
 	panic(fmt.Errorf("corrupted value: %x", v.GoString()))
@@ -1024,12 +1009,12 @@ func (v Value) String() string {
 	default:
 		switch v.Type() {
 		case 'b':
-			return strconv.FormatBool(v.a == 1)
+			return strconv.FormatBool(v.val == 1)
 		case 'i':
 			i, _ := v.Itf()
 			return "#" + fmt.Sprint(i)
 		case 'f':
-			return (*Func)(v.b).String()
+			return (*Func)(v.ptr).String()
 		default:
 			return "#void"
 		}
@@ -1047,12 +1032,12 @@ func (v Value) GoValue() interface{} {
 	}
 	switch v.Type() {
 	case 'b':
-		return v.a == 1
+		return v.val == 1
 	case 'i':
 		i, _ := v.Itf()
 		return i
 	case 'f':
-		return (*Func)(v.b)
+		return (*Func)(v.ptr)
 	default:
 		return v
 	}
@@ -1060,7 +1045,7 @@ func (v Value) GoValue() interface{} {
 
 func (v Value) DupAtom(text string) Value {
 	if v.Type() == 'a' {
-		*(*string)(unsafe.Pointer(&v.b)) = text
+		v.ptr = unsafe.Pointer(&text)
 		return v
 	}
 	return VAtom(text, 0, 0)
@@ -1070,54 +1055,56 @@ func (v Value) Equals(v2 Value) bool {
 	if v == v2 {
 		return true
 	}
-	if x, x2 := math.Float64bits(v.a), math.Float64bits(v2.a); x&0x3 == x2&0x3 { // atom or string
-		return x == x2 && *(*string)(unsafe.Pointer(&v.b)) == *(*string)(unsafe.Pointer(&v2.b))
-	}
-	if v.c == v2.c && v.c == -'i' {
-		return *v._itfptr() == *v2._itfptr()
+	if v.flag == v2.flag {
+		if v.flag == -'a' || v.flag == -'s' {
+			return *(*string)(v.ptr) == *(*string)(v2.ptr)
+		}
+		if v.flag > 0 {
+			return *v._itfptr() == *v2._itfptr()
+		}
 	}
 	return false
 }
 
 //go:nosplit
 func (v Value) Itf() (interface{}, bool) {
-	if v.c != -'i' {
+	if v.flag < 0 {
 		return nil, false
 	}
 	return *v._itfptr(), true
 }
 
 func (v Value) Fun() (*Func, bool) {
-	if v.c != -'f' {
+	if v.flag != -'f' {
 		return nil, false
 	}
-	return (*Func)(v.b), true
+	return (*Func)(v.ptr), true
 }
 
-func (v Value) Bln() (bool, bool)    { return v.a == 1, v.c == -'b' }
-func (v Value) Num() (float64, bool) { return v.a, v.c == -'n' }
+func (v Value) Bln() (bool, bool)    { return v.val == 1, v.flag == -'b' }
+func (v Value) Num() (float64, bool) { return v.val, v.flag == -'n' }
 
 func (v Value) Str() (a string, ok bool) {
 	if v.Type() == 's' {
-		a, ok = *(*string)(unsafe.Pointer(&v.b)), true
+		a, ok = *(*string)(v.ptr), true
 	}
 	return
 }
 
 func (v Value) Pos() (uint32, uint32, bool) {
-	x := math.Float64bits(v.a)
-	return uint32(x >> 33), uint32(x << 31 >> 33), x&0x3 == 2
+	x := math.Float64bits(v.val)
+	return uint32(x >> 32), uint32(x), v.flag == -'a'
 }
 
 func (v Value) Atm() (a string, ok bool) {
 	if v.Type() == 'a' {
-		a, ok = *(*string)(unsafe.Pointer(&v.b)), true
+		a, ok = *(*string)(v.ptr), true
 	}
 	return
 }
 
 func (v Value) Lst() ([]Value, bool) {
-	if v.c != -'l' {
+	if v.flag != -'l' {
 		return nil, false
 	}
 	return v._lst(), true
@@ -1125,27 +1112,25 @@ func (v Value) Lst() ([]Value, bool) {
 
 //go:nosplit
 func (v Value) _at(i int) Value {
-	hdr := (*reflect.SliceHeader)(v.b)
+	hdr := (*reflect.SliceHeader)(v.ptr)
 	return *(*Value)(unsafe.Pointer(hdr.Data + unsafe.Sizeof(Value{})*uintptr(i)))
 }
-func (v Value) _len() int       { return (*reflect.SliceHeader)(v.b).Len }
-func (v Value) _unquote() Value { return *(*Value)(v.b) }
-func (v Value) _lst() []Value   { return *(*[]Value)(v.b) }
+func (v Value) _len() int       { return (*reflect.SliceHeader)(v.ptr).Len }
+func (v Value) _unquote() Value { return *(*Value)(v.ptr) }
+func (v Value) _lst() []Value   { return *(*[]Value)(v.ptr) }
 func (v Value) _value() (vn float64, vs string, vq Value, vl []Value, vtype byte) {
-	switch v.c {
+	switch v.flag {
 	case -'n':
-		vn, vtype = v.a, 'n'
+		vn, vtype = v.val, 'n'
 	case -'l', -'d':
-		vl, vtype = v._lst(), byte(-v.c)
+		vl, vtype = v._lst(), byte(-v.flag)
 	case -'q':
 		vq, vtype = v._unquote(), 'q'
+	case -'s', -'a':
+		vs, vtype = *(*string)(v.ptr), byte(-v.flag)
 	default:
 		if v.IsVoid() {
 			vtype = 'v'
-		} else if x := math.Float64bits(v.a); x&0x3 == 3 {
-			vs, vtype = *(*string)(unsafe.Pointer(&v.b)), 's'
-		} else if x&0x3 == 2 {
-			vs, vtype = *(*string)(unsafe.Pointer(&v.b)), 'a'
 		}
 	}
 	return
@@ -1176,8 +1161,9 @@ func (v Value) _flatten() []Value {
 
 func (v Value) GoString() string {
 	s := *(*struct {
-		a    float64
-		b, c uintptr
+		c int
+		b uintptr
+		a float64
 	})(unsafe.Pointer(&v))
-	return fmt.Sprintf("{a:%v(%016x) b:%016x c:%v}", s.a, math.Float64bits(s.a), s.b, s.c)
+	return fmt.Sprintf("{val:%v(%016x) ptr:%016x flag:%v}", s.a, math.Float64bits(s.a), s.b, s.c)
 }

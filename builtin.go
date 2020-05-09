@@ -8,16 +8,12 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
-	"io/ioutil"
-	"net/http"
 	"os"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
-	"unicode"
 )
 
 var DefaultStdout io.Writer = os.Stdout
@@ -79,6 +75,16 @@ func (it *Interpreter) InstallGo(name string, fn interface{}) {
 			}
 		}
 	})
+}
+
+func (it *Interpreter) Funcs() map[string]*Func {
+	p := map[string]*Func{}
+	for k, v := range it.Globals.Unsafe() {
+		if v.Type() == 'f' {
+			p[k], _ = v.Fun()
+		}
+	}
+	return p
 }
 
 func init() {
@@ -403,7 +409,7 @@ func init() {
 				}
 			}
 		})
-	predefined.Install("#(setf! struct.Field1.Field2...Fieldn value)",
+	predefined.Install("#(setf! structname.Field1.Field2...Fieldn value)",
 		func(s *State) {
 			a := s.InAtom(0)
 			parts := strings.Split(a, ".")
@@ -416,7 +422,7 @@ func init() {
 			setter = append(setter, s.In(1), s.In(0).DupAtom(structname))
 			s.Out = VList(setter...)
 		})
-	predefined.Install("#(getf struct.Field1.Field2...Fieldn)",
+	predefined.Install("#(getf structname.Field1.Field2...Fieldn)",
 		func(s *State) {
 			a := s.InAtom(0)
 			parts := strings.Split(a, ".")
@@ -503,198 +509,6 @@ func init() {
 			}
 			s.Out = do(expr)
 		})
-}
-
-func (it *Interpreter) Funcs() map[string]*Func {
-	p := map[string]*Func{}
-	for k, v := range it.Globals.Unsafe() {
-		if v.Type() == 'f' {
-			p[k], _ = v.Fun()
-		}
-	}
-	return p
-}
-
-func (it *Interpreter) RunSimplePipeREPL(path string) error {
-	os.Remove(path)
-	if err := syscall.Mkfifo(path, 0777); err != nil {
-		return err
-	}
-
-	text := bytes.Buffer{}
-	text.WriteString(`
-	rm -rf repl-ac || true
-	touch2() { mkdir -p "$(dirname "$1")" && touch "$1" ; }
-	`)
-
-	for _, k := range it.Funcs() {
-		name := strings.Split(k.String(), " ")[0]
-		if len(name) == 0 || !unicode.IsLetter(rune(name[0])) {
-			continue
-		}
-		text.WriteString(fmt.Sprintf("touch2 repl-ac/%s || true\n", name))
-	}
-	text.WriteString(fmt.Sprintf(`
-cd repl-ac
-while true; do
-    read -p 'in > ' -e cmd
-	history -s "$cmd"
-    echo $cmd > %s && cat %s
-done
-`, path, path))
-
-	if err := ioutil.WriteFile("repl", text.Bytes(), 0777); err != nil {
-		return err
-	}
-
-	ww := &bytes.Buffer{}
-	DefaultStdout = ww
-
-	for {
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		tmp := [1024]byte{}
-		n, _ := f.Read(tmp[:])
-		f.Close()
-
-		cmd := string(bytes.TrimSpace(tmp[:n]))
-
-		ww.Reset()
-		v, err := it.Run(cmd)
-
-		resp := bytes.Buffer{}
-		resp.WriteString("out > ")
-
-		if ww.Len() > 0 {
-			resp.Write(ww.Bytes())
-		}
-
-		if err != nil {
-			resp.WriteString(err.Error())
-		} else {
-			resp.WriteString(fmt.Sprint(v))
-		}
-		resp.WriteRune('\n')
-
-		if err := ioutil.WriteFile(path, resp.Bytes(), 0777); err != nil {
-			return err
-		}
-	}
-}
-
-func (it *Interpreter) InjectDebugREPLIntopprof(title string) *Interpreter {
-	type respStruct struct {
-		Result string
-		Stdout string
-	}
-
-	ww := &bytes.Buffer{}
-	DefaultStdout = ww
-
-	http.HandleFunc("/debug/pprof/repl/tribute.min.js", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "tribute.min.js")
-	})
-
-	http.HandleFunc("/debug/pprof/repl", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "GET" {
-			p := bytes.Buffer{}
-			p.WriteString(`<!doctype html><html><meta charset="UTF-8"><title>REPL: ` + title + `</title>
-<style>
-	body { font-size: 16px }
-	* {box-sizing: border-box; font-family: monospace;}
-	a {text-decoration: none}
-	.results div:nth-child(even) {background: #eee}
-	.results > div { display: block !important; }
-	.results .result {margin-left:1em;white-space:pre-wrap}
-</style>
-<script src="/debug/pprof/repl/tribute.min.js" ></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tributejs/5.1.2/tribute.min.css" integrity="sha256-jCuf8eDAzmPpRqt5n0v1utTOCeWZc4OrGbv24Pw+ltk=" crossorigin="anonymous" />
-
-<form onsubmit="var _=this;post('',{cmd:this.querySelector('#cmd').value},function(obj, data){
-	var el = _.nextElementSibling.nextElementSibling.cloneNode(true);
-	el.querySelector('.date').innerText = new Date().toLocaleString() 
-	el.querySelector('.options').innerText = data.cmd;
-	el.querySelector('.options').onclick = function() { document.getElementById('cmd').value = data.cmd }
-	el.querySelector('.result').innerText = obj.Result;
-	if (obj.Stdout) el.querySelector('.result').innerHTML += '\n<b>Stdout:</b>\n' + obj.Stdout;
-	_.nextElementSibling.insertBefore(el,_.nextElementSibling.firstChild)
-});return false;">
-<input id=cmd style="width:100%;padding:0.5em;margin:0.5em 0;font-size:16px">
-<input type=submit style="display:none">
-</form>
-<div class=results></div>
-<div style='display:none'><b class=date></b> <a href='#' class=options></a><span class=result>z</span></div>
-
-<script>
-(new Tribute({
-	collection: [{
-		trigger: '(',
-		lookup: 'key',
-		values: function (text, cb) {
-			post("?all=1", {}, function(results) {
-				cb(results.filter(function(r) { return r.key.indexOf(text) > -1 }));
-			})
-		},
-		selectTemplate: function (item) { return '(' + item.original.key },
-		menuItemTemplate: function (item) { return item.original.doc; },
-		replaceTextSuffix: '\n',
-		positionMenu: true,
-	}]
-})).attach(document.getElementById('cmd'))
-
-function post(url, data, cb) {
-    var xml = new XMLHttpRequest(), q = "";
-	xml.onreadystatechange = function() {
-		if (xml.readyState == 4 && xml.status == 200) cb(JSON.parse(xml.responseText), data) 
-	}
-	xml.open("POST", url, true);
-	xml.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-	for (var k in data) if (data.hasOwnProperty(k)) q += '&' + k + '=' + encodeURIComponent(data[k]);
-	xml.send(q);
-}
-</script>
-
-<pre>`)
-			for _, cmd := range it.Funcs() {
-				p.WriteByte('\n')
-				p.WriteString(cmd.String())
-			}
-			w.Header().Add("Content-Type", "text/html")
-			w.Write(p.Bytes())
-			return
-		}
-
-		if r.FormValue("all") != "" {
-			keys := []map[string]string{}
-			for k, cmd := range it.Funcs() {
-				keys = append(keys, map[string]string{"key": k, "doc": cmd.sig})
-			}
-			buf, _ := json.Marshal(keys)
-			w.Write(buf)
-			return
-		}
-
-		cmd := r.FormValue("cmd")
-
-		ww.Reset()
-		v, err := it.Run(cmd)
-
-		var resp = respStruct{
-			Stdout: ww.String(),
-			Result: fmt.Sprint(v),
-		}
-		if err != nil {
-			resp.Result = err.Error()
-		}
-
-		p, _ := json.Marshal(resp)
-		w.Header().Add("Content-Type", "application/json")
-		w.Write([]byte(p))
-	})
-
-	return it
 }
 
 func (v Value) GoTypedValue(t reflect.Type) reflect.Value {
