@@ -34,47 +34,47 @@ func TestOne(t *testing.T) {
 		v := s.Int(0, 'n').Num()
 		a := s.Args[1:]
 		if v == 100 {
-			s.Out = VInterface(fmt.Errorf(""))
+			s.Out = Val(fmt.Errorf(""))
 		} else {
 			av := a[0].Num()
-			a[0] = VNumber(av + v)
-			s.Out = VList(append([]Value{}, a...)...)
+			a[0] = Num(av + v)
+			s.Out = Lst(append([]Value{}, a...)...)
 		}
 	})
 	// it.Install("callee", "", func(v int64) int64 { return v * 10 })
 	it.Install("(test/struct-gen)", func(s *State) {
 		if !s.In(0).IsTrue() {
-			s.Out = VInterface((*dummy)(nil))
+			s.Out = Val((*dummy)(nil))
 			return
 		}
 		d := &dummy{}
 		d.V.V2 = true
-		s.Out = VInterface(d)
+		s.Out = Val(d)
 		return
 	})
 	it.InstallGo("(make/vararg)", func(v ...interface{}) []interface{} {
 		return v
 	})
 	it.Install("(make/bytes)", func(s *State) {
-		n := s.In(0).Itf()
+		n := s.In(0).Val()
 		l := make([]byte, n.(int64))
 		for i := 0; i < len(l); i++ {
 			l[i] = byte(i) + 1
 		}
-		s.Out = VInterface(l)
+		s.Out = Val(l)
 	})
 	it.Install("(make/list)", func(s *State) {
 		l := make([]Value, int(s.Int(0, 'n').Num()))
 		for i := 0; i < len(l); i++ {
-			l[i] = VNumber(float64(i) + 1)
+			l[i] = Num(float64(i) + 1)
 		}
-		s.Out = VList(l...)
+		s.Out = Lst(l...)
 	})
 	it.Install("(range)", func(s *State) {
 		m := s.InMap(0)
 		f := s.InFunc(1)
 		for k, v := range m {
-			err, ok := f(VString(k), v)
+			err, ok := f(Str(k), v)
 			log.Println("===", err, ok)
 			if !err.IsTrue() {
 				s.Out = v
@@ -285,9 +285,9 @@ func BenchmarkAdd(b *testing.B) {
 }
 
 func BenchmarkAddValue(b *testing.B) {
-	var a = VString(strconv.FormatInt(time.Now().Unix(), 10))
+	var a = Str(strconv.FormatInt(time.Now().Unix(), 10))
 	for i := 0; i < b.N; i++ {
-		a = VString(strconv.FormatInt(int64(i), 10))
+		a = Str(strconv.FormatInt(int64(i), 10))
 	}
 	_ = a
 }
@@ -297,7 +297,7 @@ func TestDDD(t *testing.T) {
 	list := []Value{}
 ALL:
 	for i := 0; ; {
-		list = append(list, VNumber(float64(i)))
+		list = append(list, Num(float64(i)))
 		if i++; i == count {
 			break ALL
 		}
@@ -309,13 +309,13 @@ ALL:
 			}
 		}
 		for rand.Float64() < 0.33 {
-			list = append(list, _Vddd(VNumber(float64(i))))
+			list = append(list, _Vddd(Num(float64(i))))
 			if i++; i == count {
 				break ALL
 			}
 		}
 		for rand.Float64() < 0.2 {
-			list = append(list, _Vddd(_Vddd(VNumber(float64(i)))))
+			list = append(list, _Vddd(_Vddd(Num(float64(i)))))
 			if i++; i == count {
 				break ALL
 			}

@@ -18,7 +18,7 @@ import (
 
 var (
 	predefined  = Interpreter{Globals: &Map{}} // pre-defined functions go here
-	Void, Empty = Value{}, VList()
+	Void, Empty = Value{}, Lst()
 )
 
 type (
@@ -72,18 +72,18 @@ func New() *Interpreter {
 }
 
 func init() {
-	predefined.Globals.Store("define", VFunc(&Func{sig: "(syntax·define var val)", f: func(*State) {}}))
-	predefined.Globals.Store("set!", VFunc(&Func{sig: "(syntax·set! var val)", f: func(*State) {}}))
-	predefined.Globals.Store("lambda", VFunc(&Func{sig: "(syntax·lambda paramlist body)", f: func(*State) {}}))
-	predefined.Globals.Store("lambda#", VFunc(&Func{sig: "(syntax·lambda# paramlist body)", f: func(*State) {}}))
-	predefined.Globals.Store("if", VFunc(&Func{sig: "(syntax·if cond true-branch false-branch ...)", f: func(*State) {}}))
-	predefined.Globals.Store("quote", VFunc(&Func{sig: "(syntax·quote a)", f: func(*State) {}}))
-	predefined.Globals.Store("unquote", VFunc(&Func{sig: "(syntax·unquote a)", f: func(*State) {}}))
-	predefined.Globals.Store("quasiquote", VFunc(&Func{sig: "(syntax·quasiquote a)", f: func(*State) {}}))
-	predefined.Globals.Store("true", VBool(true))
-	predefined.Globals.Store("false", VBool(false))
-	predefined.Globals.Store("#t", VBool(true))
-	predefined.Globals.Store("#f", VBool(false))
+	predefined.Globals.Store("define", Fun(&Func{sig: "(syntax·define var val)", f: func(*State) {}}))
+	predefined.Globals.Store("set!", Fun(&Func{sig: "(syntax·set! var val)", f: func(*State) {}}))
+	predefined.Globals.Store("lambda", Fun(&Func{sig: "(syntax·lambda paramlist body)", f: func(*State) {}}))
+	predefined.Globals.Store("lambda#", Fun(&Func{sig: "(syntax·lambda# paramlist body)", f: func(*State) {}}))
+	predefined.Globals.Store("if", Fun(&Func{sig: "(syntax·if cond true-branch false-branch ...)", f: func(*State) {}}))
+	predefined.Globals.Store("quote", Fun(&Func{sig: "(syntax·quote a)", f: func(*State) {}}))
+	predefined.Globals.Store("unquote", Fun(&Func{sig: "(syntax·unquote a)", f: func(*State) {}}))
+	predefined.Globals.Store("quasiquote", Fun(&Func{sig: "(syntax·quasiquote a)", f: func(*State) {}}))
+	predefined.Globals.Store("true", Bln(true))
+	predefined.Globals.Store("false", Bln(false))
+	predefined.Globals.Store("#t", Bln(true))
+	predefined.Globals.Store("#f", Bln(false))
 	predefined.Install("#(begin ...)", func(s *State) { s.Out = begin(s.Caller, s.Args...) })
 	predefined.Install("(rest-args)", func(s *State) {
 		s.Out = Empty
@@ -93,7 +93,7 @@ func init() {
 	})
 	predefined.Install("#(and bool...)", func(s *State) {
 		if len(s.Args) == 0 {
-			s.Out = VAtom("true", 0, 0)
+			s.Out = Atm("true", 0, 0)
 			return
 		}
 		var build func(lhs Value, args []Value) Value
@@ -102,15 +102,15 @@ func init() {
 				return lhs
 			}
 			if len(args) == 1 {
-				return VList(s.Caller.DupAtom("if"), lhs, args[0], VAtom("false", 0, 0))
+				return Lst(s.Caller.Rename("if"), lhs, args[0], Atm("false", 0, 0))
 			}
-			return VList(s.Caller.DupAtom("if"), lhs, build(args[0], args[1:]), VAtom("false", 0, 0))
+			return Lst(s.Caller.Rename("if"), lhs, build(args[0], args[1:]), Atm("false", 0, 0))
 		}
 		s.Out = build(s.Args[0], s.Args[1:])
 	})
 	predefined.Install("#(or bool...)", func(s *State) {
 		if len(s.Args) == 0 {
-			s.Out = VAtom("false", 0, 0)
+			s.Out = Atm("false", 0, 0)
 			return
 		}
 		var build func(lhs Value, args []Value) Value
@@ -119,48 +119,48 @@ func init() {
 				return lhs
 			}
 			if len(args) == 1 {
-				return VList(s.Caller.DupAtom("if"), lhs, VAtom("true", 0, 0), args[0])
+				return Lst(s.Caller.Rename("if"), lhs, Atm("true", 0, 0), args[0])
 			}
-			return VList(s.Caller.DupAtom("if"), lhs, VAtom("true", 0, 0), build(args[0], args[1:]))
+			return Lst(s.Caller.Rename("if"), lhs, Atm("true", 0, 0), build(args[0], args[1:]))
 		}
 		s.Out = build(s.Args[0], s.Args[1:])
 	})
 	predefined.Install("(== a a...)", func(s *State) {
 		for i, a := 1, s.In(0); i < len(s.Args); i++ {
 			if !a.Equals(s.Args[i]) {
-				s.Out = VBool(false)
+				s.Out = Bln(false)
 				return
 			}
 		}
-		s.Out = VBool(true)
+		s.Out = Bln(true)
 	})
 	predefined.Globals.Store("=", predefined.Globals.m["=="])
-	predefined.Install("(!= a a)", func(s *State) { s.Out = VBool(!s.In(0).Equals(s.In(1))) })
+	predefined.Install("(!= a a)", func(s *State) { s.Out = Bln(!s.In(0).Equals(s.In(1))) })
 	predefined.Install("(< a a...)", func(s *State) {
 		for i, _ := 1, s.In(0); i < len(s.Args); i++ {
 			if !itfLess(s, s.Args[i-1], i) {
-				s.Out = VBool(false)
+				s.Out = Bln(false)
 				return
 			}
 		}
-		s.Out = VBool(true)
+		s.Out = Bln(true)
 	})
 	predefined.Install("(<= a a...)", func(s *State) {
 		for i, _ := 1, s.In(0); i < len(s.Args); i++ {
 			if !itfLess(s, s.Args[i-1], i) && s.Args[i-1] != s.Args[i] {
-				s.Out = VBool(false)
+				s.Out = Bln(false)
 				return
 			}
 		}
-		s.Out = VBool(true)
+		s.Out = Bln(true)
 	})
 	predefined.Install("#(> a a...)", func(s *State) {
-		s.Out = VList(s.Caller.DupAtom("not"), VList(append([]Value{s.Caller.DupAtom("<=")}, s.Args...)...))
+		s.Out = Lst(s.Caller.Rename("not"), Lst(append([]Value{s.Caller.Rename("<=")}, s.Args...)...))
 	})
 	predefined.Install("#(>= a a...)", func(s *State) {
-		s.Out = VList(s.Caller.DupAtom("not"), VList(append([]Value{s.Caller.DupAtom("<")}, s.Args...)...))
+		s.Out = Lst(s.Caller.Rename("not"), Lst(append([]Value{s.Caller.Rename("<")}, s.Args...)...))
 	})
-	predefined.Install("(not bool)", func(s *State) { s.Out = VBool(!s.In(0).IsTrue()) })
+	predefined.Install("(not bool)", func(s *State) { s.Out = Bln(!s.In(0).IsTrue()) })
 	predefined.Install("(+ num-str num-str...)", func(s *State) {
 		s.Out = s.In(0)
 		switch vn, vs, _, vl, vtype := s.Out._value(); vtype {
@@ -168,17 +168,17 @@ func init() {
 			for i := 1; i < len(s.Args); i++ {
 				vn += s.Int(i, 'n').Num()
 			}
-			s.Out = VNumber(vn)
+			s.Out = Num(vn)
 		case 'l':
 			for i := 1; i < len(s.Args); i++ {
 				vl = []Value{_Vddd(vl...), _Vddd(s.Int(i, 'l').Lst()...)}
 			}
-			s.Out = VList(vl...)
+			s.Out = Lst(vl...)
 		case 's':
 			for i := 1; i < len(s.Args); i++ {
 				vs += s.Int(i, 's').Str()
 			}
-			s.Out = VString(vs)
+			s.Out = Str(vs)
 		default:
 			panic(fmt.Errorf("can't apply 'add' on %v", s.Out))
 		}
@@ -191,21 +191,21 @@ func init() {
 		for i := 1; i < len(s.Args); i++ {
 			a -= s.Int(i, 'n').Num()
 		}
-		s.Out = VNumber(a)
+		s.Out = Num(a)
 	})
 	predefined.Install("(* number number...)", func(s *State) {
 		a := s.Int(0, 'n').Num()
 		for i := 1; i < len(s.Args); i++ {
 			a *= s.Int(i, 'n').Num()
 		}
-		s.Out = VNumber(a)
+		s.Out = Num(a)
 	})
 	predefined.Install("(/ number number...)", func(s *State) {
 		a := s.Int(0, 'n').Num()
 		for i := 1; i < len(s.Args); i++ {
 			a /= s.Int(i, 'n').Num()
 		}
-		s.Out = VNumber(a)
+		s.Out = Num(a)
 	})
 	predefined.Install("#(let ((var1 val1) ... (varn valn)) expr...)", func(s *State) {
 		names, values := []Value{}, []Value{}
@@ -215,8 +215,8 @@ func init() {
 			s.assert(len(p) == 2 && p[0].Type() == 'a' && p[0].Str() != "" || s.panic("invalid binding list format: %v", pair))
 			names, values = append(names, p[0]), append(values, p[1])
 		}
-		fn := VList(s.Caller.DupAtom("lambda"), VList(names...), begin(s.Caller, s.Args[1:]...))
-		s.Out = VList(VList(fn, _Vddd(values...))._flatten()...) // call fn
+		fn := Lst(s.Caller.Rename("lambda"), Lst(names...), begin(s.Caller, s.Args[1:]...))
+		s.Out = Lst(Lst(fn, _Vddd(values...))._flatten()...) // call fn
 	})
 	predefined.Install("#(letrec ((var1 val1) ... (varn valn)) expr...)", func(s *State) {
 		/* Unwrap to:
@@ -227,7 +227,7 @@ func init() {
 				(set! 'varn varb_tmp)
 				expr...                                // expressions
 		*/
-		let, binds := s.Caller.DupAtom("let"), s.Int(0, 'l').Lst()
+		let, binds := s.Caller.Rename("let"), s.Int(0, 'l').Lst()
 		innersets := make([]Value, len(binds))
 		innerbinds := make([]Value, len(binds))
 		outerbinds := make([]Value, len(binds))
@@ -235,13 +235,13 @@ func init() {
 			s.assert(binds[i].Type() == 'l' || s.panic("invalid binding list format: %v", binds[i]))
 			b := binds[i].Lst()
 			s.assert(len(b) == 2 && b[0].Type() == 'a' && b[0].Str() != "" || s.panic("invalid binding list format: %v", binds[i]))
-			tmpvar := VAtom(b[0].Str()+"tmp", 0, 0)
-			innersets[i] = VList(VAtom("set!", 0, 0), b[0], tmpvar)
-			innerbinds[i] = VList(tmpvar, b[1])
-			outerbinds[i] = VList(b[0], Void)
+			tmpvar := Atm(b[0].Str()+"tmp", 0, 0)
+			innersets[i] = Lst(Atm("set!", 0, 0), b[0], tmpvar)
+			innerbinds[i] = Lst(tmpvar, b[1])
+			outerbinds[i] = Lst(b[0], Void)
 		}
-		inner, _ := s.It.UnwrapMacro(VList(let, VList(innerbinds...), _Vddd(innersets...), _Vddd(s.Args[1:]...))._flatten())
-		outer, _ := s.It.UnwrapMacro([]Value{let, VList(outerbinds...), inner})
+		inner, _ := s.It.UnwrapMacro(Lst(let, Lst(innerbinds...), _Vddd(innersets...), _Vddd(s.Args[1:]...))._flatten())
+		outer, _ := s.It.UnwrapMacro([]Value{let, Lst(outerbinds...), inner})
 		s.Out = outer
 	})
 	predefined.Install("(eval expr)", func(s *State) {
@@ -250,7 +250,7 @@ func init() {
 	predefined.Install("(parse expr-string)", func(s *State) {
 		s.Out = errorOrValue(s.It.parse(s.Int(0, 's').Str()))
 	})
-	predefined.Install("(null? a)", func(s *State) { s.Out = VBool(IsEmpty(s.In(0))) })
+	predefined.Install("(null? a)", func(s *State) { s.Out = Bln(IsEmpty(s.In(0))) })
 	predefined.Install("(set-car! list value)", func(s *State) {
 		_, ok := Head(s.Int(0, 'l').Lst(), func(Value) Value { return s.In(1) })
 		s.assert(ok || s.panic("set-car!: empty list"))
@@ -264,14 +264,14 @@ func init() {
 		if x := s.In(0).Type(); x == 'a' || x == 's' {
 			s.Out = s.In(0)
 		} else {
-			s.Out = VString(s.In(0).String())
+			s.Out = Str(s.In(0).String())
 		}
 	})
-	predefined.Install("(atom string)", func(s *State) { s.Out = VAtom(s.Int(0, 's').Str(), 0, 0) })
-	predefined.Install("(list v1 v2 ... vn)", func(s *State) { s.Out = VList(append([]Value{}, s.Args...)...) })
-	predefined.Install("(append list list2)", func(s *State) { s.Out = VList(_Vddd(s.Int(0, 'l').Lst()...), _Vddd(s.Int(1, 'l').Lst()...)) })
-	predefined.Install("(add list a)", func(s *State) { s.Out = VList(_Vddd(s.Int(0, 'l').Lst()...), s.In(1)) })
-	predefined.Install("(cons a list)", func(s *State) { s.Out = VList(s.In(0), _Vddd(s.Int(1, 'l').Lst()...)) })
+	predefined.Install("(atom string)", func(s *State) { s.Out = Atm(s.Int(0, 's').Str(), 0, 0) })
+	predefined.Install("(list v1 v2 ... vn)", func(s *State) { s.Out = Lst(append([]Value{}, s.Args...)...) })
+	predefined.Install("(append list list2)", func(s *State) { s.Out = Lst(_Vddd(s.Int(0, 'l').Lst()...), _Vddd(s.Int(1, 'l').Lst()...)) })
+	predefined.Install("(add list a)", func(s *State) { s.Out = Lst(_Vddd(s.Int(0, 'l').Lst()...), s.In(1)) })
+	predefined.Install("(cons a list)", func(s *State) { s.Out = Lst(s.In(0), _Vddd(s.Int(1, 'l').Lst()...)) })
 	predefined.Install("(car list)", func(s *State) {
 		v, ok := Head(s.Int(0, 'l').Lst(), nil)
 		s.assert(ok || s.panic("car: empty list"))
@@ -280,7 +280,7 @@ func init() {
 	predefined.Install("(cdr list)", func(s *State) {
 		v, ok := Tail(s.Int(0, 'l').Lst())
 		s.assert(ok || s.panic("cdr: empty list"))
-		s.Out = VList(v...)
+		s.Out = Lst(v...)
 	})
 	predefined.Install("(last list)", func(s *State) {
 		v, ok := Last(s.Int(0, 'l').Lst(), nil)
@@ -290,37 +290,37 @@ func init() {
 	predefined.Install("(init list)", func(s *State) {
 		v, ok := Init(s.Int(0, 'l').Lst())
 		s.assert(ok || s.panic("init: empty list"))
-		s.Out = VList(v...)
+		s.Out = Lst(v...)
 	})
-	predefined.Install("(length list)", func(s *State) { s.Out = VNumber(float64(Length(s.Int(0, 'l').Lst()))) })
+	predefined.Install("(length list)", func(s *State) { s.Out = Num(float64(Length(s.Int(0, 'l').Lst()))) })
 	predefined.Install("(raise a)", func(s *State) { panic(s.In(0)) })
 	predefined.Install("(pcall handler function)", func(s *State) {
 		defer func() {
 			if r := recover(); r != nil {
-				if _, ok := s.In(0).GoValue().(*Func); !ok {
+				if _, ok := s.In(0).Val().(*Func); !ok {
 					s.Out = Val(r)
 				} else {
 					s.Out = errorOrValue(s.InFunc(0)(Val(r)))
 				}
 			}
 		}()
-		s.Out = s.It.exec(VList(_Vquote(s.In(1))), execState{callAtom: &s.Out, local: s.Map})
+		s.Out = s.It.exec(Lst(_Vquote(s.In(1))), execState{callAtom: &s.Out, local: s.Map})
 	})
 	predefined.Install("(apply function (list a1 a2 ... an))", func(s *State) {
 		v, err := s.InFunc(0)(s.Int(1, 'l')._flatten()...)
 		s.assert(err == nil || s.panic("apply panic: %v", err))
 		s.Out = v
 	})
-	predefined.Install("(error text)", func(s *State) { s.Out = VInterface(errors.New(s.Int(0, 's').Str())) })
-	predefined.Install("(error? a)", func(s *State) { _, ok := s.In(0).GoValue().(error); s.Out = VBool(ok) })
-	predefined.Install("(void? a)", func(s *State) { s.Out = VBool(s.In(0).IsVoid()) })
-	predefined.Install("(list? a)", func(s *State) { s.Out = VBool(s.In(0).Type() == 'l') })
-	predefined.Install("(atom? a)", func(s *State) { s.Out = VBool(s.In(0).Type() == 'a') })
-	predefined.Install("(bool? a)", func(s *State) { s.Out = VBool(s.In(0).Type() == 'b') })
-	predefined.Install("(number? a)", func(s *State) { s.Out = VBool(s.In(0).Type() == 'n') })
-	predefined.Install("(string? a)", func(s *State) { s.Out = VBool(s.In(0).Type() == 's') })
-	predefined.Install("(quote? a)", func(s *State) { s.Out = VBool(s.In(0).Type() == 'q') })
-	predefined.Install("(stringify a)", func(s *State) { s.Out = VString(s.In(0).String()) })
+	predefined.Install("(error text)", func(s *State) { s.Out = Val(errors.New(s.Int(0, 's').Str())) })
+	predefined.Install("(error? a)", func(s *State) { _, ok := s.In(0).Val().(error); s.Out = Bln(ok) })
+	predefined.Install("(void? a)", func(s *State) { s.Out = Bln(s.In(0).IsVoid()) })
+	predefined.Install("(list? a)", func(s *State) { s.Out = Bln(s.In(0).Type() == 'l') })
+	predefined.Install("(atom? a)", func(s *State) { s.Out = Bln(s.In(0).Type() == 'a') })
+	predefined.Install("(bool? a)", func(s *State) { s.Out = Bln(s.In(0).Type() == 'b') })
+	predefined.Install("(number? a)", func(s *State) { s.Out = Bln(s.In(0).Type() == 'n') })
+	predefined.Install("(string? a)", func(s *State) { s.Out = Bln(s.In(0).Type() == 's') })
+	predefined.Install("(quote? a)", func(s *State) { s.Out = Bln(s.In(0).Type() == 'q') })
+	predefined.Install("(stringify a)", func(s *State) { s.Out = Str(s.In(0).String()) })
 }
 
 func (it *Interpreter) Install(name string, f func(*State)) *Func {
@@ -331,7 +331,7 @@ func (it *Interpreter) Install(name string, f func(*State)) *Func {
 	it.assert(strings.HasPrefix(fn.sig, "(") && strings.HasSuffix(fn.sig, ")") ||
 		it.panic("expect function name format: \"(name ...)\" or \"#(name ...)\", not: %q", fn.sig))
 	name = fn.sig[1:strings.IndexAny(fn.sig, " )")]
-	it.Globals.Store(name, VFunc(fn))
+	it.Globals.Store(name, Fun(fn))
 	return fn
 }
 
@@ -361,7 +361,7 @@ func (s *State) InFunc(i int) func(...Value) (Value, error) {
 		for i := range a {
 			expr[i+1] = _Vquote(a[i])
 		}
-		return s.It.Exec(VList(expr...), &Map{parent: s.Map})
+		return s.It.Exec(Lst(expr...), &Map{parent: s.Map})
 	}
 }
 
@@ -428,7 +428,7 @@ func (it *Interpreter) exec(expr Value, state execState) Value {
 			for i := range e {
 				e[i] = it.exec(expr._at(i), state)
 			}
-			return VList(e...)
+			return Lst(e...)
 		}
 		return expr
 	}
@@ -486,7 +486,7 @@ TAIL_CALL:
 		default:
 			panic(fmt.Errorf("invalid binding list: %v", c._at(1)))
 		}
-		return VFunc(f)
+		return Fun(f)
 	case "quote":
 		state.assert(c._len() == 2 || state.panic("invalid quote syntax"))
 		return c._at(1)
@@ -530,15 +530,15 @@ TAIL_CALL:
 					for i := len(cc.nargs) + 1; i < c._len(); i++ {
 						values = append(values, it.exec(c._at(i), state))
 					}
-					m.set("\x00rest", VList(values...))
+					m.set("\x00rest", Lst(values...))
 				}
 			} else {
 				values := make([]Value, 0, c._len())
 				for i := 1; i < c._len(); i++ {
 					values = append(values, it.exec(c._at(i), state))
 				}
-				m.set(cc.nargs[0], VList(values...))
-				m.set("\x00rest", VList(values...))
+				m.set(cc.nargs[0], Lst(values...))
+				m.set("\x00rest", Lst(values...))
 			}
 			*state.callAtom = c._at(0)
 			state.local, expr = m, cc.n
@@ -619,7 +619,7 @@ LOOP:
 			if err != nil {
 				return Value{}, err
 			}
-			comp = append(comp, VString(t))
+			comp = append(comp, Str(t))
 		case '#':
 			if s.Peek() == '|' { // #| comment |#
 				for s.Scan(); ; {
@@ -631,7 +631,7 @@ LOOP:
 					}
 				}
 			} else {
-				comp = append(comp, VAtom("#"+scanToDelim(s), uint16(s.Pos().Line), uint16(s.Pos().Column)))
+				comp = append(comp, Atm("#"+scanToDelim(s), (s.Pos().Line), (s.Pos().Column)))
 			}
 		case ';':
 			for ; ; s.Scan() {
@@ -655,13 +655,13 @@ LOOP:
 			if c.IsVoid() {
 				return Void, fmt.Errorf("invalid *quote syntax")
 			}
-			comp = append(comp, VList(VAtom(ifstr(tok == '\'', "quote", ifstr(tok == '`', "quasiquote", "unquote")), 0, 0), c))
+			comp = append(comp, Lst(Atm(ifstr(tok == '\'', "quote", ifstr(tok == '`', "quasiquote", "unquote")), 0, 0), c))
 		default:
 			text := s.TokenText() + scanToDelim(s)
 			if v, ok := strconv.ParseFloat(text, 64); ok == nil || tok == scanner.Float || tok == scanner.Int {
-				comp = append(comp, VNumber(v))
+				comp = append(comp, Num(v))
 			} else {
-				comp = append(comp, VAtom(text, uint16(s.Pos().Line), uint16(s.Pos().Column)))
+				comp = append(comp, Atm(text, (s.Pos().Line), (s.Pos().Column)))
 			}
 		}
 		if scanOne && len(comp) >= 1 {
@@ -673,12 +673,12 @@ LOOP:
 
 func (it *Interpreter) UnwrapMacro(comp []Value) (Value, error) {
 	if len(comp) == 0 {
-		return VList(), nil
+		return Lst(), nil
 	}
 
 	va, ok := comp[0]._atm()
 	if !ok {
-		return VList(comp...), nil
+		return Lst(comp...), nil
 	}
 
 	if (va == "define" || va == "define#") && len(comp) >= 3 && comp[1].Type() == 'l' {
@@ -686,26 +686,26 @@ func (it *Interpreter) UnwrapMacro(comp []Value) (Value, error) {
 		if len(x) == 0 {
 			return Void, fmt.Errorf("invalid binding list: %v", comp[1])
 		}
-		return VList(comp[0].DupAtom("define"), x[0],
-			VList(append([]Value{comp[0].DupAtom(ifstr(va == "define#", "lambda#", "lambda")),
-				VList(x[1:]...)}, comp[2:]...)...)), nil
+		return Lst(comp[0].Rename("define"), x[0],
+			Lst(append([]Value{comp[0].Rename(ifstr(va == "define#", "lambda#", "lambda")),
+				Lst(x[1:]...)}, comp[2:]...)...)), nil
 	}
 
 	m, _ := it.Globals.Load(va)
 	if !(m.Type() == 'f' && m.Fun().macro) {
-		return VList(comp...), nil
+		return Lst(comp...), nil
 	}
 	for i := 1; i < len(comp); i++ {
 		comp[i] = _Vquote(comp[i])
 	}
-	v, err := it.executeState(VList(comp...), execState{local: it.Globals, macro: true})
+	v, err := it.executeState(Lst(comp...), execState{local: it.Globals, macro: true})
 	if err != nil {
 		return Void, err
 	}
 	if v.Type() != 'l' {
 		return v, nil
 	}
-	return VList(v._flatten()...), nil
+	return Lst(v._flatten()...), nil
 }
 
 func scanToDelim(s *scanner.Scanner) string {
@@ -744,7 +744,7 @@ func (e *assertable) panic(t string, a ...interface{}) bool {
 
 func errorOrValue(v interface{}, err error) Value {
 	if err != nil {
-		return VInterface(err)
+		return Val(err)
 	}
 	return Val(v)
 }
@@ -850,12 +850,12 @@ func ifstr(v bool, a, b string) string {
 }
 
 func begin(lead Value, exprs ...Value) Value {
-	return VList(append([]Value{lead.DupAtom("if"), Empty, Empty}, exprs...)...)
+	return Lst(append([]Value{lead.Rename("if"), Empty, Empty}, exprs...)...)
 }
 
 // zzzzzzzz
 
-// Val creates Value from interface{}. uint64 and int64 will be stored as they were because float64 can't store them correctly
+// Val creates Value from interface{}. uint64 and int64 will be stored as they were because float64 can't handle them correctly
 func Val(v interface{}) Value {
 	switch v := v.(type) {
 	case Value:
@@ -863,33 +863,35 @@ func Val(v interface{}) Value {
 	case nil:
 		return Empty
 	case int:
-		return VNumber(float64(v))
+		return Num(float64(v))
 	case int8:
-		return VNumber(float64(v))
+		return Num(float64(v))
 	case int16:
-		return VNumber(float64(v))
+		return Num(float64(v))
 	case int32:
-		return VNumber(float64(v))
+		return Num(float64(v))
 	case uint:
-		return VNumber(float64(v))
+		return Num(float64(v))
 	case uint8:
-		return VNumber(float64(v))
+		return Num(float64(v))
 	case uint16:
-		return VNumber(float64(v))
+		return Num(float64(v))
 	case uint32:
-		return VNumber(float64(v))
+		return Num(float64(v))
 	case float32:
-		return VNumber(float64(v))
+		return Num(float64(v))
 	case float64:
-		return VNumber(v)
+		return Num(v)
 	case string:
-		return VString(v)
+		return Str(v)
 	case bool:
-		return VBool(v)
+		return Bln(v)
 	case []Value:
-		return VList(v...)
+		return Lst(v...)
 	default:
-		return VInterface(v)
+		va := Value{}
+		*va._itfptr() = v
+		return va
 	}
 }
 
@@ -901,37 +903,34 @@ func ValRec(v interface{}) Value {
 		for i := range res {
 			res[i] = ValRec(rv.Index(i).Interface())
 		}
-		return VList(res...)
+		return Lst(res...)
 	case reflect.Map:
 		if rv.Type().Key().Kind() == reflect.String { // map[string]any
 			res, iter := make(map[string]Value, rv.Len()), rv.MapRange()
 			for iter.Next() {
 				res[iter.Key().String()] = ValRec(iter.Value().Interface())
 			}
-			return VInterface(res)
+			return Val(res)
 		}
 	}
 	return Val(v)
 }
 
-func VBool(v bool) Value {
+func Bln(v bool) Value {
 	if v {
 		return Value{val: 1, flag: -'b'}
 	}
 	return Value{val: 0, flag: -'b'}
 }
-
-func VAtom(v string, line, col uint16) Value {
-	return Value{flag: -'a', ptr: unsafe.Pointer(&v), val: math.Float64frombits(uint64(line)<<16 | uint64(col))}
+func Atm(v string, line, col int) Value {
+	return Value{flag: -'a', ptr: unsafe.Pointer(&v), val: math.Float64frombits(uint64(line)<<32 | uint64(col))}
 }
-
-func VString(v string) (vs Value)        { return Value{flag: -'s', ptr: unsafe.Pointer(&v)} }
-func VList(l ...Value) Value             { return Value{flag: -'l', ptr: unsafe.Pointer(&l)} }
-func VFunc(f *Func) Value                { return Value{flag: -'f', ptr: unsafe.Pointer(f)} }
-func VNumber(v float64) Value            { return Value{flag: -'n', val: v} }
-func VInterface(i interface{}) (v Value) { *v._itfptr() = i; return }
-func _Vddd(l ...Value) Value             { return Value{flag: -'d', ptr: unsafe.Pointer(&l)} } // internal use
-func _Vquote(v Value) Value              { return Value{flag: -'q', ptr: unsafe.Pointer(&v)} } // internal use
+func Str(v string) (vs Value) { return Value{flag: -'s', ptr: unsafe.Pointer(&v)} }
+func Lst(l ...Value) Value    { return Value{flag: -'l', ptr: unsafe.Pointer(&l)} }
+func Fun(f *Func) Value       { return Value{flag: -'f', ptr: unsafe.Pointer(f)} }
+func Num(v float64) Value     { return Value{flag: -'n', val: v} }
+func _Vddd(l ...Value) Value  { return Value{flag: -'d', ptr: unsafe.Pointer(&l)} } // internal use
+func _Vquote(v Value) Value   { return Value{flag: -'q', ptr: unsafe.Pointer(&v)} } // internal use
 
 //go:nosplit
 func (v *Value) _itfptr() *interface{} { return (*interface{})(unsafe.Pointer(v)) }
@@ -951,7 +950,7 @@ func (v Value) Type() byte {
 			return 'i'
 		}
 	}
-	panic(fmt.Errorf("corrupted value: %x", v.GoString()))
+	panic("corrupted value")
 }
 
 func (v Value) String() string {
@@ -963,7 +962,7 @@ func (v Value) String() string {
 	case 's':
 		return strconv.Quote(vs)
 	case 'a':
-		if line, col, _ := v.Pos(); line > 0 {
+		if line, col := v.Pos(); line > 0 {
 			return vs + fmt.Sprintf(" /*%d:%d*/", line, col)
 		}
 		return vs
@@ -983,7 +982,7 @@ func (v Value) String() string {
 		case 'b':
 			return strconv.FormatBool(v.val == 1)
 		case 'i':
-			return "#" + fmt.Sprint(v.Itf())
+			return "#" + fmt.Sprint(*v._itfptr())
 		case 'f':
 			return (*Func)(v.ptr).String()
 		default:
@@ -991,8 +990,11 @@ func (v Value) String() string {
 		}
 	}
 }
+func (v Value) GoString() string {
+	return fmt.Sprintf("{val:%v(%016x) ptr:%016x flag:%v}", v.val, math.Float64bits(v.val), v.ptr, v.flag)
+}
 
-func (v Value) GoValue() interface{} {
+func (v Value) Val() interface{} {
 	switch vn, vs, _, _, vtype := v._value(); vtype {
 	case 'n':
 		return vn
@@ -1005,20 +1007,20 @@ func (v Value) GoValue() interface{} {
 	case 'b':
 		return v.val == 1
 	case 'i':
-		return v.Itf()
+		return *v._itfptr()
 	case 'f':
-		return (*Func)(v.ptr)
+		return v.Fun()
 	default:
 		return v
 	}
 }
 
-func (v Value) DupAtom(text string) Value {
+func (v Value) Rename(text string) Value {
 	if v.Type() == 'a' {
 		v.ptr = unsafe.Pointer(&text)
 		return v
 	}
-	return VAtom(text, 0, 0)
+	return Atm(text, 0, 0)
 }
 
 func (v Value) Equals(v2 Value) bool {
@@ -1036,17 +1038,12 @@ func (v Value) Equals(v2 Value) bool {
 	return false
 }
 
-func (v Value) Itf() interface{} { return *v._itfptr() }
-func (v Value) Fun() *Func       { return (*Func)(v.ptr) }
-func (v Value) Bln() bool        { return v.val == 1 }
-func (v Value) Num() float64     { return v.val }
-func (v Value) Str() string      { return *(*string)(v.ptr) }
-func (v Value) Lst() []Value     { return *(*[]Value)(v.ptr) }
-
-func (v Value) Pos() (uint16, uint16, bool) {
-	x := math.Float64bits(v.val)
-	return uint16(x >> 16), uint16(x), v.flag == -'a'
-}
+func (v Value) Fun() *Func      { return (*Func)(v.ptr) }
+func (v Value) Bln() bool       { return v.val == 1 }
+func (v Value) Num() float64    { return v.val }
+func (v Value) Str() string     { return *(*string)(v.ptr) }
+func (v Value) Lst() []Value    { return *(*[]Value)(v.ptr) }
+func (v Value) Pos() (int, int) { x := math.Float64bits(v.val); return int(x >> 32), int(x) }
 
 //go:nosplit
 func (v Value) _at(i int) Value {
@@ -1087,7 +1084,7 @@ func (v Value) _flatten() []Value {
 		case 'd':
 			r = append(r, e._flatten()...)
 		case 'l':
-			r = append(r, VList(e._flatten()...))
+			r = append(r, Lst(e._flatten()...))
 		default:
 			r = append(r, e)
 		}
@@ -1099,8 +1096,4 @@ func (v Value) _atm() (string, bool) {
 		return v.Str(), true
 	}
 	return "", false
-}
-
-func (v Value) GoString() string {
-	return fmt.Sprintf("{val:%v(%016x) ptr:%016x flag:%v}", v.val, math.Float64bits(v.val), v.ptr, v.flag)
 }
