@@ -20,7 +20,7 @@ import (
 var DefaultStdout io.Writer = os.Stdout
 
 func (s *State) InMap(i int) map[string]Value {
-	v, ok := s.Int(i, 'i').Val().(map[string]Value)
+	v, ok := s.In(i, 'i').Val().(map[string]Value)
 	s.assert(ok || s.panic("invalid argument #%d, expect map, got %v", i, s.Args[i]))
 	return v
 }
@@ -53,14 +53,14 @@ func (it *Interpreter) InstallGo(name string, fn interface{}) {
 		ins := make([]reflect.Value, 0, rt.NumIn())
 		if rt.IsVariadic() {
 			for i := 0; i < rt.NumIn()-1; i++ {
-				ins = append(ins, s.In(i).GoTypedValue(rt.In(i)))
+				ins = append(ins, s.In(i, 0).GoTypedValue(rt.In(i)))
 			}
 			for i := rt.NumIn() - 1; i < len(s.Args); i++ {
-				ins = append(ins, s.In(i).GoTypedValue(rt.In(rt.NumIn()-1).Elem()))
+				ins = append(ins, s.In(i, 0).GoTypedValue(rt.In(rt.NumIn()-1).Elem()))
 			}
 		} else {
 			for i := 0; i < rt.NumIn(); i++ {
-				ins = append(ins, s.In(i).GoTypedValue(rt.In(i)))
+				ins = append(ins, s.In(i, 0).GoTypedValue(rt.In(i)))
 			}
 		}
 		outs := rf.Call(ins)
@@ -97,7 +97,7 @@ func init() {
 				(set! 'varn varb_tmp)
 				expr...                                // expressions
 		*/
-		let, binds := s.Caller.Rename("let"), s.Int(0, 'l').Lst()
+		let, binds := s.Caller.Rename("let"), s.In(0, 'l').Lst()
 		innersets := make([]Value, len(binds))
 		innerbinds := make([]Value, len(binds))
 		outerbinds := make([]Value, len(binds))
@@ -121,7 +121,7 @@ func init() {
 				...
 					expr...
 		*/
-		let, binds := s.Caller.Rename("let"), s.Int(0, 'l').Lst()
+		let, binds := s.Caller.Rename("let"), s.In(0, 'l').Lst()
 		last := begin(s.Caller, s.Args[1:]...)
 		for i := len(binds) - 1; i >= 0; i-- {
 			bd := binds[i]
@@ -133,39 +133,32 @@ func init() {
 		s.Out = last
 	})
 	predefined.Install("#(i64 @value)", func(s *State) {
-		t, unsigned, base := strings.ToLower(s.Int(0, 'a').Str()), false, 10
+		t, unsigned := strings.TrimPrefix(s.In(0, 'a').Str(), "@"), false
 		if strings.HasPrefix(t, "u") {
 			t, unsigned = t[1:], true
 		}
-		switch t[0] {
-		case 'x':
-			base = 16
-		case 'o':
-			base = 8
-		case 'b':
-			base = 2
-		}
 		if unsigned {
-			v, _ := strconv.ParseUint(strings.TrimLeft(t, "udxob"), base, 64)
+			v, _ := strconv.ParseUint(t, 0, 64)
 			s.Out = Val(v)
 		} else {
-			v, _ := strconv.ParseInt(strings.TrimLeft(t, "udxob"), base, 64)
+			v, _ := strconv.ParseInt(t, 0, 64)
 			s.Out = Val(v)
 		}
 	})
-	predefined.Install("(list-depth list)", func(s *State) { s.Out = Val(maxdepth(s.Int(0, 'l').Lst())) })
-	predefined.Install("(go-value-wrap a)", func(s *State) { s.Out = ValRec(s.In(0).Val()) })
+	predefined.Install("(unwrap-macro expr)", func(s *State) { s.Out = errorOrValue(UnwrapMacro(s.In(0, 'l').Lst(), s.Map)) })
+	predefined.Install("(list-depth list)", func(s *State) { s.Out = Val(maxdepth(s.In(0, 'l').Lst())) })
+	predefined.Install("(go-value-wrap a)", func(s *State) { s.Out = ValRec(s.In(0, 0).Val()) })
 	predefined.Install("(map-new key0 value0 key1 value1 ...)", func(s *State) {
 		m := map[string]Value{}
 		for i := 0; i < len(s.Args); i += 2 {
-			m[s.Int(i, 's').Str()] = s.In(i + 1)
+			m[s.In(i, 's').Str()] = s.In(i+1, 0)
 		}
 		s.Out = Val(m)
 	})
-	predefined.Install("(map-set! map key value)", func(s *State) { s.InMap(0)[s.Int(1, 's').Str()] = s.In(2) })
-	predefined.Install("(map-delete! map key)", func(s *State) { delete(s.InMap(0), s.Int(1, 's').Str()) })
-	predefined.Install("(map-get map key)", func(s *State) { s.Out = s.InMap(0)[s.Int(1, 's').Str()] })
-	predefined.Install("(map-contains map key)", func(s *State) { _, ok := s.InMap(0)[s.Int(1, 's').Str()]; s.Out = Bln(ok) })
+	predefined.Install("(map-set! map key value)", func(s *State) { s.InMap(0)[s.In(1, 's').Str()] = s.In(2, 0) })
+	predefined.Install("(map-delete! map key)", func(s *State) { delete(s.InMap(0), s.In(1, 's').Str()) })
+	predefined.Install("(map-get map key)", func(s *State) { s.Out = s.InMap(0)[s.In(1, 's').Str()] })
+	predefined.Install("(map-contains map key)", func(s *State) { _, ok := s.InMap(0)[s.In(1, 's').Str()]; s.Out = Bln(ok) })
 	predefined.Install("(map-keys map)", func(s *State) {
 		ret := make([]Value, 0, len(s.InMap(0)))
 		for i := range s.InMap(0) {
@@ -174,15 +167,15 @@ func init() {
 		s.Out = Lst(ret...)
 	})
 	predefined.Install("(skip n list)", func(s *State) {
-		l := s.Int(1, 'l').Lst()
-		for i := 0; i < int(s.Int(0, 'n').Num()); i++ {
+		l := s.In(1, 'l').Lst()
+		for i := 0; i < int(s.In(0, 'n').Num()); i++ {
 			l, _ = Tail(l)
 		}
 		s.Out = Lst(l...)
 	})
 	predefined.Install("#(lambda* (paramlist) body)", func(s *State) {
 		tmpvar := "a" + strconv.FormatInt(time.Now().Unix(), 10)
-		pl, body := s.Int(0, 'l').Lst(), []Value{
+		pl, body := s.In(0, 'l').Lst(), []Value{
 			s.Caller.Rename("lambda"),
 			s.Caller.Rename(tmpvar),
 			Lst(s.Caller.Rename("define"), s.Caller.Rename(tmpvar+"-len"), Lst(
@@ -229,30 +222,30 @@ func init() {
 		body = append(body, s.Args[1:]...)
 		s.Out = Lst(body...)
 	})
-	predefined.Install("(vector-bytes n)", func(s *State) { s.Out = Val(make([]byte, int(s.Int(0, 'n').Num()))) })
-	predefined.Install("(vector-strings n)", func(s *State) { s.Out = Val(make([]string, int(s.Int(0, 'n').Num()))) })
-	predefined.Install("(vector-ints n)", func(s *State) { s.Out = Val(make([]int, int(s.Int(0, 'n').Num()))) })
-	predefined.Install("(vector-int64s n)", func(s *State) { s.Out = Val(make([]int64, int(s.Int(0, 'n').Num()))) })
-	predefined.Install("(vector-len a)", func(s *State) { s.Out = Num(float64((reflect.ValueOf(s.In(0).Val()).Len()))) })
-	predefined.Install("(vector-null? a)", func(s *State) { s.Out = Bln(reflect.ValueOf(s.In(0).Val()).Len() == 0) })
+	predefined.Install("(vector-bytes n)", func(s *State) { s.Out = Val(make([]byte, int(s.In(0, 'n').Num()))) })
+	predefined.Install("(vector-strings n)", func(s *State) { s.Out = Val(make([]string, int(s.In(0, 'n').Num()))) })
+	predefined.Install("(vector-ints n)", func(s *State) { s.Out = Val(make([]int, int(s.In(0, 'n').Num()))) })
+	predefined.Install("(vector-int64s n)", func(s *State) { s.Out = Val(make([]int64, int(s.In(0, 'n').Num()))) })
+	predefined.Install("(vector-len a)", func(s *State) { s.Out = Num(float64((reflect.ValueOf(s.In(0, 0).Val()).Len()))) })
+	predefined.Install("(vector-null? a)", func(s *State) { s.Out = Bln(reflect.ValueOf(s.In(0, 0).Val()).Len() == 0) })
 	predefined.Install("(vector-nth vector n)", func(s *State) {
-		rm := reflect.ValueOf(s.In(0).Val())
-		s.Out = Val(rm.Index(int(s.Int(1, 'n').Num())).Interface())
+		rm := reflect.ValueOf(s.In(0, 0).Val())
+		s.Out = Val(rm.Index(int(s.In(1, 'n').Num())).Interface())
 	})
 	predefined.Install("(vector-set-nth! vector n value)", func(s *State) {
-		rm := reflect.ValueOf(s.In(0).Val())
-		rm.Index(int(s.Int(1, 'n').Num())).Set(s.In(2).GoTypedValue(rm.Type().Elem()))
+		rm := reflect.ValueOf(s.In(0, 0).Val())
+		rm.Index(int(s.In(1, 'n').Num())).Set(s.In(2, 0).GoTypedValue(rm.Type().Elem()))
 	})
 	predefined.Install("(vector-slice vector start end?)", func(s *State) {
-		rl := reflect.ValueOf(s.In(0).Val())
-		start, end := int(s.Int(1, 'n').Num()), rl.Len()
+		rl := reflect.ValueOf(s.In(0, 0).Val())
+		start, end := int(s.In(1, 'n').Num()), rl.Len()
 		if len(s.Args) == 3 {
-			end = int(s.Int(2, 'n').Num())
+			end = int(s.In(2, 'n').Num())
 		}
 		s.Out = Val(rl.Slice(start, end).Interface())
 	})
 	predefined.Install("(vector-concat v1 v2)", func(s *State) {
-		rv1, rv2 := reflect.ValueOf(s.In(0).Val()), reflect.ValueOf(s.In(1).Val())
+		rv1, rv2 := reflect.ValueOf(s.In(0, 0).Val()), reflect.ValueOf(s.In(1, 0).Val())
 		s.assert(rv1.Type() == rv2.Type() || s.panic("vector-concat: different type"))
 		r := reflect.MakeSlice(rv1.Type(), rv1.Len(), rv1.Len()+rv2.Len())
 		reflect.Copy(r, rv1)
@@ -260,32 +253,32 @@ func init() {
 		s.Out = Val(r.Interface())
 	})
 	predefined.Install("(vector-foreach vector callback)", func(s *State) {
-		rl, fn := reflect.ValueOf(s.In(0).Val()), s.Int(1, 'f')
+		rl, fn := reflect.ValueOf(s.In(0, 0).Val()), s.In(1, 'f')
 		for i := 0; i < rl.Len(); i++ {
 			fn.FunCall(Num(float64(i)), Val(rl.Index(i).Interface()))
 		}
 	})
 	predefined.Install("(define-record 'name 'field1 ... 'fieldn)", func(s *State) {
-		name, fields, typename := s.Int(0, 'a').Str(), make(map[string]int, len(s.Args)-1), new(int)
+		name, fields, typename := s.In(0, 'a').Str(), make(map[string]int, len(s.Args)-1), new(int)
 		for i := 1; i < len(s.Args); i++ {
-			fields[s.Int(i, 'a').Str()] = i
+			fields[s.In(i, 'a').Str()] = i
 			func(i int) {
-				name := name + "-" + s.Int(i, 'a').Str()
+				name := name + "-" + s.In(i, 'a').Str()
 
 				s.Map.Store(name, Fun(&Func{f: func(ss *State) { // getter
-					ss.assert(len(ss.Int(0, 'l').Lst()) == len(s.Args) && ss.Int(0, 'l').Lst()[0].Val() == typename || ss.panic("not a %s record", name))
-					ss.Out = ss.Int(0, 'l').Lst()[i]
+					ss.assert(len(ss.In(0, 'l').Lst()) == len(s.Args) && ss.In(0, 'l').Lst()[0].Val() == typename || ss.panic("not a %s record", name))
+					ss.Out = ss.In(0, 'l').Lst()[i]
 				}, sig: "(" + name + " r)"}))
 
 				s.Map.Store(name+"-set!", Fun(&Func{f: func(ss *State) { // setter
-					ss.assert(len(ss.Int(0, 'l').Lst()) == len(s.Args) && ss.Int(0, 'l').Lst()[0].Val() == typename || ss.panic("not a %s record", name))
-					ss.Int(0, 'l').Lst()[i] = ss.In(1) // setter
+					ss.assert(len(ss.In(0, 'l').Lst()) == len(s.Args) && ss.In(0, 'l').Lst()[0].Val() == typename || ss.panic("not a %s record", name))
+					ss.In(0, 'l').Lst()[i] = ss.In(1, 0) // setter
 				}, sig: "(" + name + "-set! r value)"}))
 			}(i)
 		}
 
 		s.Map.Store(name+"?", Fun(&Func{f: func(ss *State) {
-			ss.Out = Bln(len(ss.Int(0, 'l').Lst()) == len(s.Args) && ss.Int(0, 'l').Lst()[0].Val() == typename)
+			ss.Out = Bln(len(ss.In(0, 'l').Lst()) == len(s.Args) && ss.In(0, 'l').Lst()[0].Val() == typename)
 		}, sig: "(" + name + "? a)"}))
 
 		s.Map.Store(name+"-new", Fun(&Func{f: func(ss *State) {
@@ -295,15 +288,15 @@ func init() {
 				out[i] = Void
 			}
 			for i := 0; i < len(ss.Args); i += 2 {
-				fieldname := ss.Int(i, 'a').Str()
+				fieldname := ss.In(i, 'a').Str()
 				ss.assert(fields[fieldname] != 0 || ss.panic("field %s not found", fieldname))
-				out[fields[fieldname]] = ss.In(i + 1)
+				out[fields[fieldname]] = ss.In(i+1, 0)
 			}
 			ss.Out = Lst(out...)
 		}, sig: "(" + name + "-new ...)"}))
 	})
 	predefined.Install("(map fn list)", func(s *State) {
-		l, r, fn, i := s.Int(1, 'l').Lst(), []Value{}, s.Int(0, 'f'), 0
+		l, r, fn, i := s.In(1, 'l').Lst(), []Value{}, s.In(0, 'f'), 0
 		for h, ok := Head(l, nil); ok; h, ok = Head(l, nil) {
 			v, err := fn.FunCall(h)
 			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
@@ -314,7 +307,7 @@ func init() {
 		s.Out = Lst(r...)
 	})
 	predefined.Install("(reduce fn v list)", func(s *State) {
-		l, left, fn, i := s.Int(2, 'l').Lst(), s.In(1), s.Int(0, 'f'), 0
+		l, left, fn, i := s.In(2, 'l').Lst(), s.In(1, 0), s.In(0, 'f'), 0
 		var err error
 		for h, ok := Head(l, nil); ok; h, ok = Head(l, nil) {
 			left, err = fn.FunCall(left, h)
@@ -325,7 +318,7 @@ func init() {
 		s.Out = left
 	})
 	predefined.Install("(reduce-right fn v list)", func(s *State) {
-		i, rl, right, fn := 0, s.Int(2, 'l').Lst(), s.In(1), s.Int(0, 'f')
+		i, rl, right, fn := 0, s.In(2, 'l').Lst(), s.In(1, 0), s.In(0, 'f')
 		var err error
 		for l, ok := Last(rl, nil); ok; l, ok = Last(rl, nil) {
 			right, err = fn.FunCall(right, l)
@@ -348,9 +341,9 @@ func init() {
 			}
 			return []Value{s.Caller.Rename("if"), cond, stat, Void}
 		}
-		exprs := build(s.In(0))
+		exprs := build(s.In(0, 0))
 		for i, head := 1, exprs; i < len(s.Args); i++ {
-			tail := build(s.In(i))
+			tail := build(s.In(i, 0))
 			head[3] = Lst(tail...)
 			head = tail
 		}
@@ -358,14 +351,14 @@ func init() {
 	})
 	// 	predefined.Install("(eq any any...)", func(s *State) {
 	// 		s.Out = true
-	// 		for i, a := 1, s.In(0); i < len(s.Args); i++ {
+	// 		for i, a := 1, s.In(0, 0); i < len(s.Args); i++ {
 	// 			s.Out = s.Out.(bool) && reflect.DeepEqual(a, s.Args[i])
 	// 		}
 	// 	})
 	predefined.Install("(struct-get 'field1 ... 'fieldn struct)", func(s *State) {
-		rv := reflect.ValueOf(s.In(len(s.Args) - 1).Val())
+		rv := reflect.ValueOf(s.In(len(s.Args)-1, 0).Val())
 		for i := 0; i < len(s.Args)-1; i++ {
-			m := s.Int(i, 'a').Str()
+			m := s.In(i, 'a').Str()
 			if rv.Kind() == reflect.Ptr {
 				rv = rv.Elem()
 			}
@@ -389,13 +382,13 @@ func init() {
 		s.Out = Val(rv.Interface())
 	})
 	predefined.Install("(struct-set! 'field1 ... 'fieldn value struct)", func(s *State) {
-		v := s.In(len(s.Args) - 2)
-		f := reflect.ValueOf(s.In(len(s.Args) - 1).Val())
+		v := s.In(len(s.Args)-2, 0)
+		f := reflect.ValueOf(s.In(len(s.Args)-1, 0).Val())
 		if f.Kind() == reflect.Ptr {
 			f = f.Elem()
 		}
 		for i := 0; i < len(s.Args)-2; i++ {
-			m := s.Int(i, 'a').Str()
+			m := s.In(i, 'a').Str()
 			f = f.FieldByName(m)
 			if i != len(s.Args)-3 { // not last atom
 				s.assert(f.IsValid() || s.panic("field %q not found", m))
@@ -407,30 +400,30 @@ func init() {
 	predefined.Install("(^ string...)", func(s *State) {
 		p := bytes.Buffer{}
 		for i := range s.Args {
-			p.WriteString(s.Int(i, 's').Str())
+			p.WriteString(s.In(i, 's').Str())
 		}
 		s.Out = Str(p.String())
 	})
 	predefined.Install("(println any...)", func(s *State) { fmt.Fprintln(DefaultStdout, vlisttointerface(s.Args)...) })
 	predefined.Install("(print any...)", func(s *State) { fmt.Fprint(DefaultStdout, vlisttointerface(s.Args)...) })
-	predefined.Install("(printf format any...)", func(s *State) { fmt.Fprintf(DefaultStdout, s.Int(0, 's').Str(), vlisttointerface(s.Args[1:])...) })
+	predefined.Install("(printf format any...)", func(s *State) { fmt.Fprintf(DefaultStdout, s.In(0, 's').Str(), vlisttointerface(s.Args[1:])...) })
 	predefined.Install("(regex/match regexp text)", func(s *State) {
-		s.Out = Bln(regexp.MustCompile(s.Int(0, 's').Str()).MatchString(s.Int(1, 's').Str()))
+		s.Out = Bln(regexp.MustCompile(s.In(0, 's').Str()).MatchString(s.In(1, 's').Str()))
 	})
 	predefined.Install("(regex/find regexp text count)", func(s *State) {
-		s.Out = ValRec(regexp.MustCompile(s.Int(0, 's').Str()).FindAllStringSubmatch(s.Int(1, 's').Str(), int(s.Int(2, 'n').Num())))
+		s.Out = ValRec(regexp.MustCompile(s.In(0, 's').Str()).FindAllStringSubmatch(s.In(1, 's').Str(), int(s.In(2, 'n').Num())))
 	})
 	predefined.Install("(json a)", func(s *State) {
-		buf, err := json.MarshalIndent(s.In(0), "", "  ")
+		buf, err := json.MarshalIndent(s.In(0, 0), "", "  ")
 		s.Out = errorOrValue(string(buf), err)
 	})
 	predefined.Install("(json-c a)", func(s *State) {
-		buf, err := json.Marshal(s.In(0))
+		buf, err := json.Marshal(s.In(0, 0))
 		s.Out = errorOrValue(string(buf), err)
 	})
 	predefined.Install("(json-parse string)",
 		func(s *State) {
-			text := strings.TrimSpace(s.Int(0, 's').Str())
+			text := strings.TrimSpace(s.In(0, 's').Str())
 			if strings.HasPrefix(text, "{") {
 				m := map[string]interface{}{}
 				if err := json.Unmarshal([]byte(text), &m); err != nil {
@@ -456,28 +449,28 @@ func init() {
 		})
 	predefined.Install("#(setf! structname.Field1.Field2...Fieldn value)",
 		func(s *State) {
-			a := s.Int(0, 'a').Str()
+			a := s.In(0, 'a').Str()
 			parts := strings.Split(a, ".")
 			s.assert(len(parts) > 1 || s.panic("too few fields to set"))
 			structname := parts[0]
-			setter := []Value{s.In(0).Rename("struct-set!")}
+			setter := []Value{s.In(0, 0).Rename("struct-set!")}
 			for i := 1; i < len(parts); i++ {
-				setter = append(setter, _Vquote(s.In(0).Rename(parts[i])))
+				setter = append(setter, _Vquote(s.In(0, 0).Rename(parts[i])))
 			}
-			setter = append(setter, s.In(1), s.In(0).Rename(structname))
+			setter = append(setter, s.In(1, 0), s.In(0, 0).Rename(structname))
 			s.Out = Lst(setter...)
 		})
 	predefined.Install("#(getf structname.Field1.Field2...Fieldn)",
 		func(s *State) {
-			a := s.Int(0, 'a').Str()
+			a := s.In(0, 'a').Str()
 			parts := strings.Split(a, ".")
 			s.assert(len(parts) > 1 || s.panic("too few fields to get"))
 			structname := parts[0]
-			setter := []Value{s.In(0).Rename("struct-get")}
+			setter := []Value{s.In(0, 0).Rename("struct-get")}
 			for i := 1; i < len(parts); i++ {
-				setter = append(setter, _Vquote(s.In(0).Rename(parts[i])))
+				setter = append(setter, _Vquote(s.In(0, 0).Rename(parts[i])))
 			}
-			setter = append(setter, s.In(0).Rename(structname))
+			setter = append(setter, s.In(0, 0).Rename(structname))
 			s.Out = Lst(setter...)
 		})
 

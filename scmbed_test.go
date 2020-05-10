@@ -26,12 +26,12 @@ func (d *dummy) M(v string, args ...string) string {
 func TestOne(t *testing.T) {
 	it := New()
 	it.Install("(assert)", func(s *State) {
-		if !s.In(0).IsTrue() {
+		if !s.In(0, 0).IsTrue() {
 			panic(fmt.Errorf("assertion failed"))
 		}
 	})
 	it.Install("(var/test)", func(s *State) {
-		v := s.Int(0, 'n').Num()
+		v := s.In(0, 'n').Num()
 		a := s.Args[1:]
 		if v == 100 {
 			s.Out = Val(fmt.Errorf(""))
@@ -43,7 +43,7 @@ func TestOne(t *testing.T) {
 	})
 	// it.Install("callee", "", func(v int64) int64 { return v * 10 })
 	it.Install("(test/struct-gen)", func(s *State) {
-		if !s.In(0).IsTrue() {
+		if !s.In(0, 0).IsTrue() {
 			s.Out = Val((*dummy)(nil))
 			return
 		}
@@ -56,7 +56,7 @@ func TestOne(t *testing.T) {
 		return v
 	})
 	it.Install("(make/bytes)", func(s *State) {
-		n := s.In(0).Val()
+		n := s.In(0, 0).Val()
 		l := make([]byte, n.(int64))
 		for i := 0; i < len(l); i++ {
 			l[i] = byte(i) + 1
@@ -64,7 +64,7 @@ func TestOne(t *testing.T) {
 		s.Out = Val(l)
 	})
 	it.Install("(make/list)", func(s *State) {
-		l := make([]Value, int(s.Int(0, 'n').Num()))
+		l := make([]Value, int(s.In(0, 'n').Num()))
 		for i := 0; i < len(l); i++ {
 			l[i] = Num(float64(i) + 1)
 		}
@@ -72,7 +72,7 @@ func TestOne(t *testing.T) {
 	})
 	it.Install("(range)", func(s *State) {
 		m := s.InMap(0)
-		f := s.Int(1, 'f')
+		f := s.In(1, 'f')
 		for k, v := range m {
 			err, ok := f.FunCall(Str(k), v)
 			log.Println("===", err, ok)
@@ -90,7 +90,7 @@ func TestOne(t *testing.T) {
 		log.Println(v, "===>", r)
 	}
 	it.Install("#(iff)", func(s *State) {
-		s.Out = s.In(1)
+		s.Out = s.In(1, 0)
 	})
 	assert("(assert (= #/中 0x4e2d")
 	assert(`(if #f (+ 1 #| inline || comment (assert false) #|#  2 3.5) (lambda (a b) ())`)
@@ -115,10 +115,10 @@ func TestOne(t *testing.T) {
 	 (assert (list-eq? (go-value-wrap (make/vararg 1 2 "a")) '(1 2 "a")))
 	 (assert (null? (go-value-wrap (make/vararg))))
 	 (assert (list-eq? (make/list 1000) (make/list 1000)`)
-	assert("(assert (list-eq? (quasiquote (1 2 3 ,(cons 4 `(5 ,(* 2 3))))) '(1 2 3 (4 5 6))))")
+	assert("(assert (list-eq? (quasiquote (1 2 3 ,(cons 4 `(5 ,(let ((a 2)) (* a 3) ))))) '(1 2 3 (4 5 6))))")
 	assert("(assert (list-eq? `( 1 ',(+ 2 3)) '(1 '5)))")
 	// assert("(assert (println (list 'defun 'a) '(defun a)")
-	assert(`(let () (define list (make/bytes (i64 d10))) (vector-set-nth! list 0 10) (assert (== 10 (vector-nth list 0)`)
+	assert(`(let () (define list (make/bytes (i64 @10))) (vector-set-nth! list 0 10) (assert (== 10 (vector-nth list 0)`)
 	assert(`(let () (define-record 'user 'name 'ok) (define a (user-new 'ok #f)) (user-ok-set! a #t) (assert (user-ok a)) `)
 	assert(`(assert (== 20 (reduce + 0 (map (lambda (a) ($ a * 2)) '(1 2 3 4)`)
 	assert(`(define makecps (lambda (f)
@@ -130,7 +130,6 @@ func TestOne(t *testing.T) {
 	 	 ))
 	 	(define +& (makecps +))  (apply +& (cons 1 (cons 2 (cons 3 (cons (lambda (r) (assert (= r 6))) ()`)
 	// assert(`(define a 1) (assert (== a 1)) (define (aa if p2) (set! if (+ if 1)) (+ if p2)) (assert (== 10 (aa 5 4) `)
-	// assert(`(set! a (lambda (req opt?) opt)) (println (a 1))`)
 	assert(`(define Foreach (lambda (s cb) (letrec [(ForeachImpl (lambda (s cb idx) ; comment
 	 		(if (null? s) () (begin
 	 			(if (== false (cb (car s) idx )) ()
@@ -197,6 +196,8 @@ func TestOne(t *testing.T) {
 	assert(`(defun a (a) (* a (length (rest-args)))) (defun b(a) (* a (length (rest-args)))) (assert (= 10 (a 5 "a" ())))
 	(assert (= 1 (b 1 1
 	`)
+	assert(`(eval (unwrap-macro (list 'defun 'madd '(a b) '(+ a b`)
+	assert(`(assert (= (madd "a" "b") "ab"))`)
 	assert(`(define #or (lambda# args
 	 		(begin
 	 			(define Build-Macro-Or (lambda (lhs)
@@ -264,7 +265,6 @@ func TestOne(t *testing.T) {
 	assert(`(assert (= 2 (pcall (lambda (e) (+ e 1)) (lambda () (assert (= 1 1)) (raise 1) (* 3 4)))`)
 	assert(`(assert (<= 1 2 2 4`)
 	assert(`(assert (>= 10 2 2 1`)
-	// assert(`(assert (and (is 'void (car '())) (is 'void '()`)
 	assert(`(let ((a 1)) (assert (= 2 (eval '(+ a 1`)
 	assert(`(set! a (map-new "a" 1)) (map-set! a "a" 2) (assert (= (map-get a "a") 2)`)
 }

@@ -87,7 +87,7 @@ func init() {
 	predefined.Install("#(begin ...)", func(s *State) { s.Out = begin(s.Caller, s.Args...) })
 	predefined.Install("(rest-args)", func(s *State) {
 		s.Out = Empty
-		if v, ok := s.Map.m["\x00rest"]; ok {
+		if v, ok := s.Map.m["\x00"]; ok {
 			s.Out = v
 		}
 	})
@@ -126,7 +126,7 @@ func init() {
 		s.Out = build(s.Args[0], s.Args[1:])
 	})
 	predefined.Install("(== a a...)", func(s *State) {
-		for i, a := 1, s.In(0); i < len(s.Args); i++ {
+		for i, a := 1, s.In(0, 0); i < len(s.Args); i++ {
 			if !a.Equals(s.Args[i]) {
 				s.Out = Bln(false)
 				return
@@ -135,9 +135,9 @@ func init() {
 		s.Out = Bln(true)
 	})
 	predefined.Globals.Store("=", predefined.Globals.m["=="])
-	predefined.Install("(!= a a)", func(s *State) { s.Out = Bln(!s.In(0).Equals(s.In(1))) })
+	predefined.Install("(!= a a)", func(s *State) { s.Out = Bln(!s.In(0, 0).Equals(s.In(1, 0))) })
 	predefined.Install("(< a a...)", func(s *State) {
-		for i, _ := 1, s.In(0); i < len(s.Args); i++ {
+		for i, _ := 1, s.In(0, 0); i < len(s.Args); i++ {
 			if !itfLess(s, s.Args[i-1], i) {
 				s.Out = Bln(false)
 				return
@@ -146,7 +146,7 @@ func init() {
 		s.Out = Bln(true)
 	})
 	predefined.Install("(<= a a...)", func(s *State) {
-		for i, _ := 1, s.In(0); i < len(s.Args); i++ {
+		for i, _ := 1, s.In(0, 0); i < len(s.Args); i++ {
 			if !itfLess(s, s.Args[i-1], i) && s.Args[i-1] != s.Args[i] {
 				s.Out = Bln(false)
 				return
@@ -160,23 +160,23 @@ func init() {
 	predefined.Install("#(>= a a...)", func(s *State) {
 		s.Out = Lst(s.Caller.Rename("not"), Lst(append([]Value{s.Caller.Rename("<")}, s.Args...)...))
 	})
-	predefined.Install("(not bool)", func(s *State) { s.Out = Bln(!s.In(0).IsTrue()) })
+	predefined.Install("(not bool)", func(s *State) { s.Out = Bln(!s.In(0, 0).IsTrue()) })
 	predefined.Install("(+ num-str num-str...)", func(s *State) {
-		s.Out = s.In(0)
+		s.Out = s.In(0, 0)
 		switch vn, vs, _, vl, vtype := s.Out._value(); vtype {
 		case 'n':
 			for i := 1; i < len(s.Args); i++ {
-				vn += s.Int(i, 'n').Num()
+				vn += s.In(i, 'n').Num()
 			}
 			s.Out = Num(vn)
 		case 'l':
 			for i := 1; i < len(s.Args); i++ {
-				vl = []Value{_Vddd(vl...), _Vddd(s.Int(i, 'l').Lst()...)}
+				vl = []Value{_Vddd(vl...), _Vddd(s.In(i, 'l').Lst()...)}
 			}
 			s.Out = Lst(vl...)
 		case 's':
 			for i := 1; i < len(s.Args); i++ {
-				vs += s.Int(i, 's').Str()
+				vs += s.In(i, 's').Str()
 			}
 			s.Out = Str(vs)
 		default:
@@ -184,32 +184,32 @@ func init() {
 		}
 	})
 	predefined.Install("(- number number...)", func(s *State) {
-		a := s.Int(0, 'n').Num()
+		a := s.In(0, 'n').Num()
 		if len(s.Args) == 1 {
 			a = -a
 		}
 		for i := 1; i < len(s.Args); i++ {
-			a -= s.Int(i, 'n').Num()
+			a -= s.In(i, 'n').Num()
 		}
 		s.Out = Num(a)
 	})
 	predefined.Install("(* number number...)", func(s *State) {
-		a := s.Int(0, 'n').Num()
+		a := s.In(0, 'n').Num()
 		for i := 1; i < len(s.Args); i++ {
-			a *= s.Int(i, 'n').Num()
+			a *= s.In(i, 'n').Num()
 		}
 		s.Out = Num(a)
 	})
 	predefined.Install("(/ number number...)", func(s *State) {
-		a := s.Int(0, 'n').Num()
+		a := s.In(0, 'n').Num()
 		for i := 1; i < len(s.Args); i++ {
-			a /= s.Int(i, 'n').Num()
+			a /= s.In(i, 'n').Num()
 		}
 		s.Out = Num(a)
 	})
 	predefined.Install("#(let ((var1 val1) ... (varn valn)) expr...)", func(s *State) {
 		names, values := []Value{}, []Value{}
-		for _, pair := range s.Int(0, 'l').Lst() {
+		for _, pair := range s.In(0, 'l').Lst() {
 			s.assert(pair.Type() == 'l' || s.panic("invalid binding list format: %v", pair))
 			p := pair.Lst()
 			s.assert(len(p) == 2 && p[0].Type() == 'a' && p[0].Str() != "" || s.panic("invalid binding list format: %v", pair))
@@ -219,82 +219,82 @@ func init() {
 		s.Out = Lst(Lst(fn, _Vddd(values...))._flatten()...) // call fn
 	})
 	predefined.Install("(eval expr)", func(s *State) {
-		s.Out = errorOrValue(executeState(s.In(0), execState{local: s.Map}))
+		s.Out = errorOrValue(executeState(s.In(0, 0), execState{local: s.Map}))
 	})
 	predefined.Install("(parse expr-string)", func(s *State) {
-		s.Out = errorOrValue(parse(s.Int(0, 's').Str(), s.Map))
+		s.Out = errorOrValue(parse(s.In(0, 's').Str(), s.Map))
 	})
-	predefined.Install("(null? a)", func(s *State) { s.Out = Bln(IsEmpty(s.In(0))) })
+	predefined.Install("(null? a)", func(s *State) { s.Out = Bln(IsEmpty(s.In(0, 0))) })
 	predefined.Install("(set-car! list value)", func(s *State) {
-		_, ok := Head(s.Int(0, 'l').Lst(), func(Value) Value { return s.In(1) })
+		_, ok := Head(s.In(0, 'l').Lst(), func(Value) Value { return s.In(1, 0) })
 		s.assert(ok || s.panic("set-car!: empty list"))
 	})
 	predefined.Install("(set-last! list value)", func(s *State) {
-		_, ok := Last(s.Int(0, 'l').Lst(), func(Value) Value { return s.In(1) })
+		_, ok := Last(s.In(0, 'l').Lst(), func(Value) Value { return s.In(1, 0) })
 		s.assert(ok || s.panic("set-last!: empty list"))
 	})
-	predefined.Install("(number text)", func(s *State) { s.Out = errorOrValue(strconv.ParseFloat(s.Int(0, 's').Str(), 64)) })
+	predefined.Install("(number text)", func(s *State) { s.Out = errorOrValue(strconv.ParseFloat(s.In(0, 's').Str(), 64)) })
 	predefined.Install("(string a)", func(s *State) {
-		if x := s.In(0).Type(); x == 'a' || x == 's' {
-			s.Out = s.In(0)
+		if x := s.In(0, 0).Type(); x == 'a' || x == 's' {
+			s.Out = s.In(0, 0)
 		} else {
-			s.Out = Str(s.In(0).String())
+			s.Out = Str(s.In(0, 0).String())
 		}
 	})
-	predefined.Install("(atom string)", func(s *State) { s.Out = Atm(s.Int(0, 's').Str(), 0, 0) })
+	predefined.Install("(atom string)", func(s *State) { s.Out = Atm(s.In(0, 's').Str(), 0, 0) })
 	predefined.Install("(list v1 v2 ... vn)", func(s *State) { s.Out = Lst(append([]Value{}, s.Args...)...) })
-	predefined.Install("(append list list2)", func(s *State) { s.Out = Lst(_Vddd(s.Int(0, 'l').Lst()...), _Vddd(s.Int(1, 'l').Lst()...)) })
-	predefined.Install("(add list a)", func(s *State) { s.Out = Lst(_Vddd(s.Int(0, 'l').Lst()...), s.In(1)) })
-	predefined.Install("(cons a list)", func(s *State) { s.Out = Lst(s.In(0), _Vddd(s.Int(1, 'l').Lst()...)) })
+	predefined.Install("(append list list2)", func(s *State) { s.Out = Lst(_Vddd(s.In(0, 'l').Lst()...), _Vddd(s.In(1, 'l').Lst()...)) })
+	predefined.Install("(add list a)", func(s *State) { s.Out = Lst(_Vddd(s.In(0, 'l').Lst()...), s.In(1, 0)) })
+	predefined.Install("(cons a list)", func(s *State) { s.Out = Lst(s.In(0, 0), _Vddd(s.In(1, 'l').Lst()...)) })
 	predefined.Install("(car list)", func(s *State) {
-		v, ok := Head(s.Int(0, 'l').Lst(), nil)
+		v, ok := Head(s.In(0, 'l').Lst(), nil)
 		s.assert(ok || s.panic("car: empty list"))
 		s.Out = v
 	})
 	predefined.Install("(cdr list)", func(s *State) {
-		v, ok := Tail(s.Int(0, 'l').Lst())
+		v, ok := Tail(s.In(0, 'l').Lst())
 		s.assert(ok || s.panic("cdr: empty list"))
 		s.Out = Lst(v...)
 	})
 	predefined.Install("(last list)", func(s *State) {
-		v, ok := Last(s.Int(0, 'l').Lst(), nil)
+		v, ok := Last(s.In(0, 'l').Lst(), nil)
 		s.assert(ok || s.panic("last: empty list"))
 		s.Out = v
 	})
 	predefined.Install("(init list)", func(s *State) {
-		v, ok := Init(s.Int(0, 'l').Lst())
+		v, ok := Init(s.In(0, 'l').Lst())
 		s.assert(ok || s.panic("init: empty list"))
 		s.Out = Lst(v...)
 	})
-	predefined.Install("(length list)", func(s *State) { s.Out = Num(float64(Length(s.Int(0, 'l').Lst()))) })
-	predefined.Install("(raise a)", func(s *State) { panic(s.In(0)) })
+	predefined.Install("(length list)", func(s *State) { s.Out = Num(float64(Length(s.In(0, 'l').Lst()))) })
+	predefined.Install("(raise a)", func(s *State) { panic(s.In(0, 0)) })
 	predefined.Install("(pcall handler function)", func(s *State) {
 		defer func() {
 			if r := recover(); r != nil {
-				if s.In(0).Type() != 'f' {
+				if s.In(0, 0).Type() != 'f' {
 					s.Out = Val(r)
 				} else {
-					s.Out = errorOrValue(s.Int(0, 'f').FunCall(Val(r)))
+					s.Out = errorOrValue(s.In(0, 'f').FunCall(Val(r)))
 				}
 			}
 		}()
-		s.Out = __exec(Lst(_Vquote(s.In(1))), execState{callAtom: &s.Out, local: s.Map})
+		s.Out = __exec(Lst(_Vquote(s.In(1, 0))), execState{callAtom: &s.Out, local: s.Map})
 	})
 	predefined.Install("(apply function (list a1 a2 ... an))", func(s *State) {
-		v, err := s.Int(0, 'f').FunCall(s.Int(1, 'l')._flatten()...)
+		v, err := s.In(0, 'f').FunCall(s.In(1, 'l')._flatten()...)
 		s.assert(err == nil || s.panic("apply panic: %v", err))
 		s.Out = v
 	})
-	predefined.Install("(error text)", func(s *State) { s.Out = Val(errors.New(s.Int(0, 's').Str())) })
-	predefined.Install("(error? a)", func(s *State) { _, ok := s.In(0).Val().(error); s.Out = Bln(ok) })
-	predefined.Install("(void? a)", func(s *State) { s.Out = Bln(s.In(0).IsVoid()) })
-	predefined.Install("(list? a)", func(s *State) { s.Out = Bln(s.In(0).Type() == 'l') })
-	predefined.Install("(atom? a)", func(s *State) { s.Out = Bln(s.In(0).Type() == 'a') })
-	predefined.Install("(bool? a)", func(s *State) { s.Out = Bln(s.In(0).Type() == 'b') })
-	predefined.Install("(number? a)", func(s *State) { s.Out = Bln(s.In(0).Type() == 'n') })
-	predefined.Install("(string? a)", func(s *State) { s.Out = Bln(s.In(0).Type() == 's') })
-	predefined.Install("(quote? a)", func(s *State) { s.Out = Bln(s.In(0).Type() == 'q') })
-	predefined.Install("(stringify a)", func(s *State) { s.Out = Str(s.In(0).String()) })
+	predefined.Install("(error text)", func(s *State) { s.Out = Val(errors.New(s.In(0, 's').Str())) })
+	predefined.Install("(error? a)", func(s *State) { _, ok := s.In(0, 0).Val().(error); s.Out = Bln(ok) })
+	predefined.Install("(void? a)", func(s *State) { s.Out = Bln(s.In(0, 0).IsVoid()) })
+	predefined.Install("(list? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'l') })
+	predefined.Install("(atom? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'a') })
+	predefined.Install("(bool? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'b') })
+	predefined.Install("(number? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'n') })
+	predefined.Install("(string? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 's') })
+	predefined.Install("(quote? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'q') })
+	predefined.Install("(stringify a)", func(s *State) { s.Out = Str(s.In(0, 0).String()) })
 }
 
 func (it *Interpreter) Install(name string, f func(*State)) *Func {
@@ -317,14 +317,10 @@ func (f *Func) String() string {
 		ifstr(f.varg, "", "(") + strings.Join(f.nargs, " ") + ifstr(f.varg, "", ") ") + f.n.String() + ")"
 }
 
-func (s *State) In(i int) Value {
+// In returns nth argument and panics when: t != 0 && t != v.Type()
+func (s *State) In(i int, t byte) Value {
 	s.assert(i >= 0 && i < len(s.Args) || s.panic("too few arguments, expect at least %d", i+1))
-	return s.Args[i]
-}
-
-func (s *State) Int(i int, t byte) Value {
-	s.assert(i >= 0 && i < len(s.Args) || s.panic("too few arguments, expect at least %d", i+1))
-	s.assert(s.Args[i].Type() == t || s.panic("invalid argument #%d, expect '%v', got %v", i, string(t), s.Args[i]))
+	s.assert(t == 0 || s.Args[i].Type() == t || s.panic("invalid argument #%d, expect '%v', got %v", i, string(t), s.Args[i]))
 	return s.Args[i]
 }
 
@@ -491,7 +487,7 @@ TAIL_CALL:
 					for i := len(cc.nargs) + 1; i < c._len(); i++ {
 						values = append(values, __exec(c._at(i), state))
 					}
-					m.set("\x00rest", Lst(values...))
+					m.set("\x00", Lst(values...))
 				}
 			} else {
 				values := make([]Value, 0, c._len())
@@ -499,7 +495,7 @@ TAIL_CALL:
 					values = append(values, __exec(c._at(i), state))
 				}
 				m.set(cc.nargs[0], Lst(values...))
-				m.set("\x00rest", Lst(values...))
+				m.set("\x00", Lst(values...))
 			}
 			*state.callAtom = c._at(0)
 			state.local, expr = m, cc.n
@@ -697,11 +693,11 @@ func scanToDelim(s *scanner.Scanner) string {
 func itfLess(s *State, a Value, i int) bool {
 	switch vn, vs, _, _, vtype := a._value(); vtype {
 	case 'n':
-		return vn < s.Int(i, 'n').Num()
+		return vn < s.In(i, 'n').Num()
 	case 's':
-		return vs < s.Int(i, 's').Str()
+		return vs < s.In(i, 's').Str()
 	}
-	panic(fmt.Errorf("argument #%d: %v and %v are not comparable", i, a, s.In(i)))
+	panic(fmt.Errorf("argument #%d: %v and %v are not comparable", i, a, s.In(i, 0)))
 }
 
 func (e *assertable) assert(ok bool) {
