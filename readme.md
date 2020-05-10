@@ -16,7 +16,7 @@ func init() {
     ...
 
     // 1. If your server has debug/pprof enabled:
-    repl.InjectDebugREPLIntopprof(it, "Title")
+    repl.InjectDebugPProfREPL(it, "Title")
     // Navigate to http://.../debug/pprof/repl to use the REPL
 
     // 2. If you can access to the working directory where your server is running in:

@@ -18,15 +18,11 @@ import (
 )
 
 var (
-	predefined  = Interpreter{Globals: &Map{}} // pre-defined functions go here
+	Default     = &Context{}
 	Void, Empty = Value{}, Lst()
 )
 
 type (
-	Interpreter struct {
-		assertable
-		Globals *Map
-	}
 	Value struct {
 		flag int            // interface{} 0
 		ptr  unsafe.Pointer // interface{} 1
@@ -40,24 +36,25 @@ type (
 		// Used by native functions
 		n     Value
 		nargs []string
-		cls   *Map
+		cls   *Context
 	}
 	State struct {
-		*Map
+		*Context
 		assertable
 		Args        []Value
 		Out, Caller Value
 	}
-	Map struct {
-		parent *Map
+	Context struct {
+		assertable
+		parent *Context
 		m      map[string]Value
 	}
 	execState struct {
 		assertable
-		callAtom     *Value
-		local        *Map
-		macro, quasi bool
-		args         struct { // all go native calls share the same stack: args.list, each used region is identified by args.start
+		callAtom *Value
+		local    *Context
+		quasi    bool
+		args     struct { // all go native calls share the same stack: args.list, each used region is identified by args.start
 			start int
 			list  *[]Value
 		}
@@ -65,33 +62,29 @@ type (
 	assertable struct{ err error }
 )
 
-func New() *Interpreter {
-	it := &Interpreter{}
-	it.Globals = predefined.Globals.Copy()
-	return it
-}
+func New() *Context { return Default.Copy() }
 
 func init() {
-	predefined.Globals.Store("define", Fun(&Func{sig: "(syntax·define var val)", f: func(*State) {}}))
-	predefined.Globals.Store("set!", Fun(&Func{sig: "(syntax·set! var val)", f: func(*State) {}}))
-	predefined.Globals.Store("lambda", Fun(&Func{sig: "(syntax·lambda paramlist body)", f: func(*State) {}}))
-	predefined.Globals.Store("lambda#", Fun(&Func{sig: "(syntax·lambda# paramlist body)", f: func(*State) {}}))
-	predefined.Globals.Store("if", Fun(&Func{sig: "(syntax·if cond true-branch false-branch ...)", f: func(*State) {}}))
-	predefined.Globals.Store("quote", Fun(&Func{sig: "(syntax·quote a)", f: func(*State) {}}))
-	predefined.Globals.Store("unquote", Fun(&Func{sig: "(syntax·unquote a)", f: func(*State) {}}))
-	predefined.Globals.Store("quasiquote", Fun(&Func{sig: "(syntax·quasiquote a)", f: func(*State) {}}))
-	predefined.Globals.Store("true", Bln(true))
-	predefined.Globals.Store("false", Bln(false))
-	predefined.Globals.Store("#t", Bln(true))
-	predefined.Globals.Store("#f", Bln(false))
-	predefined.Install("#(begin ...)", func(s *State) { s.Out = begin(s.Caller, s.Args...) })
-	predefined.Install("(rest-args)", func(s *State) {
+	Default.Store("define", Fun(&Func{sig: "(syntax·define var val)", f: func(*State) {}}))
+	Default.Store("set!", Fun(&Func{sig: "(syntax·set! var val)", f: func(*State) {}}))
+	Default.Store("lambda", Fun(&Func{sig: "(syntax·lambda paramlist body)", f: func(*State) {}}))
+	Default.Store("lambda#", Fun(&Func{sig: "(syntax·lambda# paramlist body)", f: func(*State) {}}))
+	Default.Store("if", Fun(&Func{sig: "(syntax·if cond true-branch false-branch ...)", f: func(*State) {}}))
+	Default.Store("quote", Fun(&Func{sig: "(syntax·quote a)", f: func(*State) {}}))
+	Default.Store("unquote", Fun(&Func{sig: "(syntax·unquote a)", f: func(*State) {}}))
+	Default.Store("quasiquote", Fun(&Func{sig: "(syntax·quasiquote a)", f: func(*State) {}}))
+	Default.Store("true", Bln(true))
+	Default.Store("false", Bln(false))
+	Default.Store("#t", Bln(true))
+	Default.Store("#f", Bln(false))
+	Default.Install("#(begin ...)", func(s *State) { s.Out = begin(s.Caller, s.Args...) })
+	Default.Install("(rest-args)", func(s *State) {
 		s.Out = Empty
-		if v, ok := s.Map.m["\x00"]; ok {
+		if v, ok := s.Context.m["\x00"]; ok {
 			s.Out = v
 		}
 	})
-	predefined.Install("#(and bool...)", func(s *State) {
+	Default.Install("#(and bool...)", func(s *State) {
 		if len(s.Args) == 0 {
 			s.Out = Atm("true", 0, 0)
 			return
@@ -101,14 +94,11 @@ func init() {
 			if len(args) == 0 {
 				return lhs
 			}
-			if len(args) == 1 {
-				return Lst(s.Caller.Rename("if"), lhs, args[0], Atm("false", 0, 0))
-			}
 			return Lst(s.Caller.Rename("if"), lhs, build(args[0], args[1:]), Atm("false", 0, 0))
 		}
 		s.Out = build(s.Args[0], s.Args[1:])
 	})
-	predefined.Install("#(or bool...)", func(s *State) {
+	Default.Install("#(or bool...)", func(s *State) {
 		if len(s.Args) == 0 {
 			s.Out = Atm("false", 0, 0)
 			return
@@ -118,14 +108,11 @@ func init() {
 			if len(args) == 0 {
 				return lhs
 			}
-			if len(args) == 1 {
-				return Lst(s.Caller.Rename("if"), lhs, Atm("true", 0, 0), args[0])
-			}
 			return Lst(s.Caller.Rename("if"), lhs, Atm("true", 0, 0), build(args[0], args[1:]))
 		}
 		s.Out = build(s.Args[0], s.Args[1:])
 	})
-	predefined.Install("(== a a...)", func(s *State) {
+	Default.Install("(== a a...)", func(s *State) {
 		for i, a := 1, s.In(0, 0); i < len(s.Args); i++ {
 			if !a.Equals(s.Args[i]) {
 				s.Out = Bln(false)
@@ -134,9 +121,9 @@ func init() {
 		}
 		s.Out = Bln(true)
 	})
-	predefined.Globals.Store("=", predefined.Globals.m["=="])
-	predefined.Install("(!= a a)", func(s *State) { s.Out = Bln(!s.In(0, 0).Equals(s.In(1, 0))) })
-	predefined.Install("(< a a...)", func(s *State) {
+	Default.Store("=", Default.m["=="])
+	Default.Install("(!= a a)", func(s *State) { s.Out = Bln(!s.In(0, 0).Equals(s.In(1, 0))) })
+	Default.Install("(< a a...)", func(s *State) {
 		for i, _ := 1, s.In(0, 0); i < len(s.Args); i++ {
 			if !itfLess(s, s.Args[i-1], i) {
 				s.Out = Bln(false)
@@ -145,23 +132,23 @@ func init() {
 		}
 		s.Out = Bln(true)
 	})
-	predefined.Install("(<= a a...)", func(s *State) {
+	Default.Install("(<= a a...)", func(s *State) {
 		for i, _ := 1, s.In(0, 0); i < len(s.Args); i++ {
-			if !itfLess(s, s.Args[i-1], i) && s.Args[i-1] != s.Args[i] {
+			if !itfLess(s, s.Args[i-1], i) && !s.Args[i-1].Equals(s.Args[i]) {
 				s.Out = Bln(false)
 				return
 			}
 		}
 		s.Out = Bln(true)
 	})
-	predefined.Install("#(> a a...)", func(s *State) {
+	Default.Install("#(> a a...)", func(s *State) {
 		s.Out = Lst(s.Caller.Rename("not"), Lst(append([]Value{s.Caller.Rename("<=")}, s.Args...)...))
 	})
-	predefined.Install("#(>= a a...)", func(s *State) {
+	Default.Install("#(>= a a...)", func(s *State) {
 		s.Out = Lst(s.Caller.Rename("not"), Lst(append([]Value{s.Caller.Rename("<")}, s.Args...)...))
 	})
-	predefined.Install("(not bool)", func(s *State) { s.Out = Bln(!s.In(0, 0).IsTrue()) })
-	predefined.Install("(+ num-str num-str...)", func(s *State) {
+	Default.Install("(not bool)", func(s *State) { s.Out = Bln(!s.In(0, 0).IsTrue()) })
+	Default.Install("(+ num-str num-str...)", func(s *State) {
 		s.Out = s.In(0, 0)
 		switch vn, vs, _, vl, vtype := s.Out._value(); vtype {
 		case 'n':
@@ -183,7 +170,7 @@ func init() {
 			panic(fmt.Errorf("can't apply 'add' on %v", s.Out))
 		}
 	})
-	predefined.Install("(- number number...)", func(s *State) {
+	Default.Install("(- number number...)", func(s *State) {
 		a := s.In(0, 'n').Num()
 		if len(s.Args) == 1 {
 			a = -a
@@ -193,21 +180,21 @@ func init() {
 		}
 		s.Out = Num(a)
 	})
-	predefined.Install("(* number number...)", func(s *State) {
+	Default.Install("(* number number...)", func(s *State) {
 		a := s.In(0, 'n').Num()
 		for i := 1; i < len(s.Args); i++ {
 			a *= s.In(i, 'n').Num()
 		}
 		s.Out = Num(a)
 	})
-	predefined.Install("(/ number number...)", func(s *State) {
+	Default.Install("(/ number number...)", func(s *State) {
 		a := s.In(0, 'n').Num()
 		for i := 1; i < len(s.Args); i++ {
 			a /= s.In(i, 'n').Num()
 		}
 		s.Out = Num(a)
 	})
-	predefined.Install("#(let ((var1 val1) ... (varn valn)) expr...)", func(s *State) {
+	Default.Install("#(let ((var1 val1) ... (varn valn)) expr...)", func(s *State) {
 		names, values := []Value{}, []Value{}
 		for _, pair := range s.In(0, 'l').Lst() {
 			s.assert(pair.Type() == 'l' || s.panic("invalid binding list format: %v", pair))
@@ -218,86 +205,82 @@ func init() {
 		fn := Lst(s.Caller.Rename("lambda"), Lst(names...), begin(s.Caller, s.Args[1:]...))
 		s.Out = Lst(Lst(fn, _Vddd(values...))._flatten()...) // call fn
 	})
-	predefined.Install("(eval expr)", func(s *State) {
-		s.Out = errorOrValue(executeState(s.In(0, 0), execState{local: s.Map}))
-	})
-	predefined.Install("(parse expr-string)", func(s *State) {
-		s.Out = errorOrValue(parse(s.In(0, 's').Str(), s.Map))
-	})
-	predefined.Install("(null? a)", func(s *State) { s.Out = Bln(IsEmpty(s.In(0, 0))) })
-	predefined.Install("(set-car! list value)", func(s *State) {
+	Default.Install("(eval expr)", func(s *State) { s.Out = errorOrValue(s.Context.Exec(s.In(0, 0))) })
+	Default.Install("(parse expr-string)", func(s *State) { s.Out = errorOrValue(s.Context.Parse(s.In(0, 's').Str())) })
+	Default.Install("(null? a)", func(s *State) { s.Out = Bln(IsEmpty(s.In(0, 0))) })
+	Default.Install("(set-car! list value)", func(s *State) {
 		_, ok := Head(s.In(0, 'l').Lst(), func(Value) Value { return s.In(1, 0) })
 		s.assert(ok || s.panic("set-car!: empty list"))
 	})
-	predefined.Install("(set-last! list value)", func(s *State) {
+	Default.Install("(set-last! list value)", func(s *State) {
 		_, ok := Last(s.In(0, 'l').Lst(), func(Value) Value { return s.In(1, 0) })
 		s.assert(ok || s.panic("set-last!: empty list"))
 	})
-	predefined.Install("(number text)", func(s *State) { s.Out = errorOrValue(strconv.ParseFloat(s.In(0, 's').Str(), 64)) })
-	predefined.Install("(string a)", func(s *State) {
+	Default.Install("(number text)", func(s *State) { s.Out = errorOrValue(strconv.ParseFloat(s.In(0, 's').Str(), 64)) })
+	Default.Install("(string a)", func(s *State) {
 		if x := s.In(0, 0).Type(); x == 'a' || x == 's' {
 			s.Out = s.In(0, 0)
 		} else {
 			s.Out = Str(s.In(0, 0).String())
 		}
 	})
-	predefined.Install("(atom string)", func(s *State) { s.Out = Atm(s.In(0, 's').Str(), 0, 0) })
-	predefined.Install("(list v1 v2 ... vn)", func(s *State) { s.Out = Lst(append([]Value{}, s.Args...)...) })
-	predefined.Install("(append list list2)", func(s *State) { s.Out = Lst(_Vddd(s.In(0, 'l').Lst()...), _Vddd(s.In(1, 'l').Lst()...)) })
-	predefined.Install("(add list a)", func(s *State) { s.Out = Lst(_Vddd(s.In(0, 'l').Lst()...), s.In(1, 0)) })
-	predefined.Install("(cons a list)", func(s *State) { s.Out = Lst(s.In(0, 0), _Vddd(s.In(1, 'l').Lst()...)) })
-	predefined.Install("(car list)", func(s *State) {
+	Default.Install("(atom string)", func(s *State) { s.Out = Atm(s.In(0, 's').Str(), 0, 0) })
+	Default.Install("(list v1 v2 ... vn)", func(s *State) { s.Out = Lst(append([]Value{}, s.Args...)...) })
+	Default.Install("(append list list2)", func(s *State) { s.Out = Lst(_Vddd(s.In(0, 'l').Lst()...), _Vddd(s.In(1, 'l').Lst()...)) })
+	Default.Install("(add list a)", func(s *State) { s.Out = Lst(_Vddd(s.In(0, 'l').Lst()...), s.In(1, 0)) })
+	Default.Install("(cons a list)", func(s *State) { s.Out = Lst(s.In(0, 0), _Vddd(s.In(1, 'l').Lst()...)) })
+	Default.Install("(car list)", func(s *State) {
 		v, ok := Head(s.In(0, 'l').Lst(), nil)
 		s.assert(ok || s.panic("car: empty list"))
 		s.Out = v
 	})
-	predefined.Install("(cdr list)", func(s *State) {
+	Default.Install("(cdr list)", func(s *State) {
 		v, ok := Tail(s.In(0, 'l').Lst())
 		s.assert(ok || s.panic("cdr: empty list"))
 		s.Out = Lst(v...)
 	})
-	predefined.Install("(last list)", func(s *State) {
+	Default.Install("(last list)", func(s *State) {
 		v, ok := Last(s.In(0, 'l').Lst(), nil)
 		s.assert(ok || s.panic("last: empty list"))
 		s.Out = v
 	})
-	predefined.Install("(init list)", func(s *State) {
+	Default.Install("(init list)", func(s *State) {
 		v, ok := Init(s.In(0, 'l').Lst())
 		s.assert(ok || s.panic("init: empty list"))
 		s.Out = Lst(v...)
 	})
-	predefined.Install("(length list)", func(s *State) { s.Out = Num(float64(Length(s.In(0, 'l').Lst()))) })
-	predefined.Install("(raise a)", func(s *State) { panic(s.In(0, 0)) })
-	predefined.Install("(pcall handler function)", func(s *State) {
+	Default.Install("(length list)", func(s *State) { s.Out = Num(float64(Length(s.In(0, 'l').Lst()))) })
+	Default.Install("(raise a)", func(s *State) { panic(s.In(0, 0)) })
+	Default.Install("(pcall handler function)", func(s *State) {
 		defer func() {
 			if r := recover(); r != nil {
 				if s.In(0, 0).Type() != 'f' {
 					s.Out = Val(r)
 				} else {
-					s.Out = errorOrValue(s.In(0, 'f').FunCall(Val(r)))
+					s.Out = errorOrValue(s.In(0, 'f').Fun().Call(Val(r)))
 				}
 			}
 		}()
-		s.Out = __exec(Lst(_Vquote(s.In(1, 0))), execState{callAtom: &s.Out, local: s.Map})
+		s.Out = __exec(Lst(_Vquote(s.In(1, 0))), execState{callAtom: &s.Out, local: s.Context})
 	})
-	predefined.Install("(apply function (list a1 a2 ... an))", func(s *State) {
-		v, err := s.In(0, 'f').FunCall(s.In(1, 'l')._flatten()...)
+	Default.Install("(apply function (list a1 a2 ... an))", func(s *State) {
+		v, err := s.In(0, 'f').Fun().Call(s.In(1, 'l')._flatten()...)
 		s.assert(err == nil || s.panic("apply panic: %v", err))
 		s.Out = v
 	})
-	predefined.Install("(error text)", func(s *State) { s.Out = Val(errors.New(s.In(0, 's').Str())) })
-	predefined.Install("(error? a)", func(s *State) { _, ok := s.In(0, 0).Val().(error); s.Out = Bln(ok) })
-	predefined.Install("(void? a)", func(s *State) { s.Out = Bln(s.In(0, 0).IsVoid()) })
-	predefined.Install("(list? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'l') })
-	predefined.Install("(atom? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'a') })
-	predefined.Install("(bool? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'b') })
-	predefined.Install("(number? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'n') })
-	predefined.Install("(string? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 's') })
-	predefined.Install("(quote? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'q') })
-	predefined.Install("(stringify a)", func(s *State) { s.Out = Str(s.In(0, 0).String()) })
+	Default.Install("(error text)", func(s *State) { s.Out = Val(errors.New(s.In(0, 's').Str())) })
+	Default.Install("(error? a)", func(s *State) { _, ok := s.In(0, 0).Val().(error); s.Out = Bln(ok) })
+	Default.Install("(void? a)", func(s *State) { s.Out = Bln(s.In(0, 0).IsVoid()) })
+	Default.Install("(list? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'l') })
+	Default.Install("(atom? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'a') })
+	Default.Install("(bool? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'b') })
+	Default.Install("(number? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'n') })
+	Default.Install("(string? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 's') })
+	Default.Install("(quote? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'q') })
+	Default.Install("(stringify a)", func(s *State) { s.Out = Str(s.In(0, 0).String()) })
 }
 
-func (it *Interpreter) Install(name string, f func(*State)) *Func {
+func (ctx *Context) Install(name string, f func(*State)) Value {
 	fn := &Func{f: f, sig: strings.TrimSpace(name)}
 	if strings.HasPrefix(fn.sig, "#") {
 		fn.sig, fn.macro = fn.sig[1:], true
@@ -305,8 +288,17 @@ func (it *Interpreter) Install(name string, f func(*State)) *Func {
 	if strings.HasPrefix(fn.sig, "(") && strings.HasSuffix(fn.sig, ")") {
 		name = fn.sig[1:strings.IndexAny(fn.sig, " )")]
 	}
-	it.Globals.Store(name, Fun(fn))
-	return fn
+	ctx.Store(name, Fun(fn))
+	return Fun(fn)
+}
+
+func (f *Func) Call(a ...Value) (Value, error) {
+	expr := make([]Value, len(a)+1)
+	expr[0] = _Vquote(Fun(f))
+	for i := range a {
+		expr[i+1] = _Vquote(a[i])
+	}
+	return ((*Context)(nil)).Exec(Lst(expr...))
 }
 
 func (f *Func) String() string {
@@ -324,7 +316,7 @@ func (s *State) In(i int, t byte) Value {
 	return s.Args[i]
 }
 
-func (m *Map) find(k string) (Value, *Map) {
+func (m *Context) find(k string) (Value, *Context) {
 	for ; m != nil; m = m.parent {
 		if v, ok := m.m[k]; ok {
 			return v, m
@@ -333,14 +325,14 @@ func (m *Map) find(k string) (Value, *Map) {
 	return Void, nil
 }
 
-func (m *Map) set(k string, v Value) {
+func (m *Context) set(k string, v Value) {
 	if m.m == nil {
 		m.m = make(map[string]Value, 4)
 	}
 	m.m[k] = v
 }
 
-func (m *Map) Store(k string, v Value) {
+func (m *Context) Store(k string, v Value) {
 	if _, mv := m.find(k); mv == nil {
 		m.set(k, v)
 	} else {
@@ -348,12 +340,12 @@ func (m *Map) Store(k string, v Value) {
 	}
 }
 
-func (m *Map) Load(k string) (Value, bool) {
+func (m *Context) Load(k string) (Value, bool) {
 	v, mv := m.find(k)
 	return v, mv != nil
 }
 
-func (m *Map) Delete(k string) (Value, bool) {
+func (m *Context) Delete(k string) (Value, bool) {
 	v, mv := m.find(k)
 	if mv != nil {
 		delete(mv.m, k)
@@ -361,10 +353,10 @@ func (m *Map) Delete(k string) (Value, bool) {
 	return v, mv != nil
 }
 
-func (m *Map) Len() int { return len(m.m) }
+func (m *Context) Len() int { return len(m.m) }
 
-func (m *Map) Copy() *Map {
-	m2 := &Map{m: make(map[string]Value, len(m.m)), parent: m.parent}
+func (m *Context) Copy() *Context {
+	m2 := &Context{m: make(map[string]Value, len(m.m)), parent: m.parent}
 	for k, v := range m.m {
 		m2.m[k] = v
 	}
@@ -473,10 +465,9 @@ TAIL_CALL:
 		fn := __exec(c._at(0), state)
 		state.assert(fn.Type() == 'f' || state.panic("invalid function: %v", c._at(0)))
 		cc := fn.Fun()
-		state.assert(!cc.macro || state.macro || state.panic("mis-calling macro: %v", c._at(0)))
 
 		if cc.f == nil {
-			m := &Map{parent: cc.cls}
+			m := &Context{parent: cc.cls}
 			if !cc.varg {
 				for i, name := range cc.nargs {
 					state.assert(i+1 < c._len() || state.panic("too few arguments, expect at least %d", i+1))
@@ -502,7 +493,7 @@ TAIL_CALL:
 			goto TAIL_CALL
 		}
 
-		s := State{Map: state.local, Out: Void, Caller: c._at(0)}
+		s := State{Context: state.local, Out: Void, Caller: c._at(0)}
 		if state.args.list == nil {
 			state.args.list = new([]Value)
 		}
@@ -520,10 +511,10 @@ TAIL_CALL:
 	}
 }
 
-func parse(tmpl string, macroEvalEnv *Map) (Value, error) {
+func (ctx *Context) Parse(text string) (Value, error) {
 	var s scanner.Scanner
 	var err error
-	s.Init(strings.NewReader(tmpl))
+	s.Init(strings.NewReader(text))
 	s.Mode &^= scanner.ScanChars | scanner.ScanRawStrings
 	s.Error = func(s *scanner.Scanner, msg string) {
 		pos := s.Position
@@ -532,7 +523,7 @@ func parse(tmpl string, macroEvalEnv *Map) (Value, error) {
 		}
 		err = fmt.Errorf("parse: %s at %d:%d", msg, pos.Line, pos.Column)
 	}
-	v, perr := scan(&s, macroEvalEnv, false)
+	v, perr := ctx.scan(&s, false)
 	if perr != nil {
 		return Void, fmt.Errorf("parse: %v at %d:%d", perr, s.Pos().Line, s.Pos().Column)
 	}
@@ -542,9 +533,7 @@ func parse(tmpl string, macroEvalEnv *Map) (Value, error) {
 	return begin(Void, v), err
 }
 
-func Exec(c Value, local *Map) (Value, error) { return executeState(c, execState{local: local}) }
-
-func executeState(c Value, state execState) (result Value, err error) {
+func (ctx *Context) Exec(c Value) (output Value, err error) {
 	var callAtom Value
 	defer func() {
 		if r := recover(); r != nil {
@@ -554,19 +543,18 @@ func executeState(c Value, state execState) (result Value, err error) {
 			err = fmt.Errorf("%v at %v", r, callAtom)
 		}
 	}()
-	state.callAtom = &callAtom
-	return __exec(c, state), nil
+	return __exec(c, execState{local: ctx, callAtom: &callAtom}), nil
 }
 
-func (it *Interpreter) Run(tmpl string) (result interface{}, err error) {
-	c, err := parse(tmpl, it.Globals)
+func (ctx *Context) Run(tmpl string) (result interface{}, err error) {
+	c, err := ctx.Parse(tmpl)
 	if err != nil {
 		return nil, err
 	}
-	return Exec(c, it.Globals)
+	return ctx.Exec(c)
 }
 
-func scan(s *scanner.Scanner, macroEvalEnv *Map, scanOne bool) (Value, error) {
+func (ctx *Context) scan(s *scanner.Scanner, scanOne bool) (Value, error) {
 	var comp []Value
 LOOP:
 	for tok := s.Scan(); tok != scanner.EOF; tok = s.Scan() {
@@ -606,7 +594,7 @@ LOOP:
 				}
 			}
 		case '(', '[':
-			c, err := scan(s, macroEvalEnv, false)
+			c, err := ctx.scan(s, false)
 			if err != nil {
 				return Value{}, err
 			}
@@ -614,7 +602,7 @@ LOOP:
 		case ')', ']':
 			break LOOP
 		case '\'', '`', ',':
-			c, err := scan(s, macroEvalEnv, true)
+			c, err := ctx.scan(s, true)
 			if err != nil {
 				return Void, err
 			}
@@ -636,10 +624,10 @@ LOOP:
 			return comp[0], nil
 		}
 	}
-	return UnwrapMacro(comp, macroEvalEnv)
+	return ctx.UnwrapMacro(comp)
 }
 
-func UnwrapMacro(comp []Value, local *Map) (Value, error) {
+func (ctx *Context) UnwrapMacro(comp []Value) (Value, error) {
 	if len(comp) == 0 {
 		return Lst(), nil
 	}
@@ -659,7 +647,7 @@ func UnwrapMacro(comp []Value, local *Map) (Value, error) {
 				Lst(x[1:]...)}, comp[2:]...)...)), nil
 	}
 
-	m, _ := local.Load(va)
+	m, _ := ctx.Load(va)
 	if !(m.Type() == 'f' && m.Fun().macro) {
 		return Lst(comp...), nil
 	}
@@ -667,7 +655,7 @@ func UnwrapMacro(comp []Value, local *Map) (Value, error) {
 	for i := 1; i < len(comp); i++ {
 		comp[i] = _Vquote(comp[i])
 	}
-	v, err := executeState(Lst(comp...), execState{local: local, macro: true})
+	v, err := ctx.Exec(Lst(comp...))
 	if err != nil {
 		return Void, err
 	}
@@ -953,7 +941,7 @@ func (v Value) String() string {
 		case 'i':
 			return "#" + fmt.Sprint(*v._itfptr())
 		case 'f':
-			return (*Func)(v.ptr).String()
+			return v.Fun().String()
 		default:
 			return "#void"
 		}
@@ -1013,14 +1001,6 @@ func (v Value) Num() float64    { return v.val }
 func (v Value) Str() string     { return *(*string)(v.ptr) }
 func (v Value) Lst() []Value    { return *(*[]Value)(v.ptr) }
 func (v Value) Pos() (int, int) { x := math.Float64bits(v.val); return int(x >> 32), int(x << 32 >> 32) }
-func (v Value) FunCall(a ...Value) (Value, error) {
-	expr := make([]Value, len(a)+1)
-	expr[0] = _Vquote(v)
-	for i := range a {
-		expr[i+1] = _Vquote(a[i])
-	}
-	return Exec(Lst(expr...), nil)
-}
 
 //go:nosplit
 func (v Value) _at(i int) Value {

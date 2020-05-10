@@ -74,7 +74,7 @@ func TestOne(t *testing.T) {
 		m := s.InMap(0)
 		f := s.In(1, 'f')
 		for k, v := range m {
-			err, ok := f.FunCall(Str(k), v)
+			err, ok := f.Fun().Call(Str(k), v)
 			log.Println("===", err, ok)
 			if !err.IsTrue() {
 				s.Out = v
