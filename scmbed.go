@@ -882,8 +882,13 @@ func Bln(v bool) Value {
 func Atm(v string, line, col int) Value {
 	return Value{flag: -'a', ptr: unsafe.Pointer(&v), val: math.Float64frombits(uint64(line)<<32 | uint64(col))}
 }
+func Lst(l ...Value) Value {
+	if len(l) == 0 {
+		return Value{flag: -'l'}
+	}
+	return Value{flag: -'l', ptr: unsafe.Pointer(&l)}
+}
 func Str(v string) (vs Value) { return Value{flag: -'s', ptr: unsafe.Pointer(&v)} }
-func Lst(l ...Value) Value    { return Value{flag: -'l', ptr: unsafe.Pointer(&l)} }
 func Fun(f *Func) Value       { return Value{flag: -'f', ptr: unsafe.Pointer(f)} }
 func Num(v float64) Value     { return Value{flag: -'n', val: v} }
 func _Vddd(l ...Value) Value  { return Value{flag: -'d', ptr: unsafe.Pointer(&l)} } // internal use
@@ -999,15 +1004,25 @@ func (v Value) Fun() *Func      { return (*Func)(v.ptr) }
 func (v Value) Bln() bool       { return v.val == 1 }
 func (v Value) Num() float64    { return v.val }
 func (v Value) Str() string     { return *(*string)(v.ptr) }
-func (v Value) Lst() []Value    { return *(*[]Value)(v.ptr) }
 func (v Value) Pos() (int, int) { x := math.Float64bits(v.val); return int(x >> 32), int(x << 32 >> 32) }
+func (v Value) Lst() []Value {
+	if v.ptr == nil {
+		return nil
+	}
+	return *(*[]Value)(v.ptr)
+}
 
 //go:nosplit
 func (v Value) _at(i int) Value {
 	hdr := (*reflect.SliceHeader)(v.ptr)
 	return *(*Value)(unsafe.Pointer(hdr.Data + unsafe.Sizeof(v)*uintptr(i)))
 }
-func (v Value) _len() int { return (*reflect.SliceHeader)(v.ptr).Len }
+func (v Value) _len() int {
+	if v.ptr == nil {
+		return 0
+	}
+	return (*reflect.SliceHeader)(v.ptr).Len
+}
 func (v Value) _value() (vn float64, vs string, vq Value, vl []Value, vtype byte) {
 	switch v.flag {
 	case -'n':

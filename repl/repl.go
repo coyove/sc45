@@ -9,7 +9,7 @@ import (
 	"github.com/coyove/scmbed"
 )
 
-func InjectDebugPProfREPL(it *scmbed.Interpreter, title string) {
+func InjectDebugPProfREPL(it *scmbed.Context, title string) {
 	type respStruct struct {
 		Result string
 		Stdout string

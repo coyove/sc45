@@ -14,7 +14,7 @@ import (
 	"github.com/coyove/scmbed"
 )
 
-func RunSimplePipeREPL(it *scmbed.Interpreter, path string) error {
+func RunSimplePipeREPL(it *scmbed.Context, path string) error {
 	os.Remove(path)
 	if err := syscall.Mkfifo(path, 0777); err != nil {
 		return err
