@@ -203,8 +203,9 @@ func init() {
 			names, values = append(names, p[0]), append(values, p[1])
 		}
 		fn := Lst(s.Caller.Rename("lambda"), Lst(names...), begin(s.Caller, s.Args[1:]...))
-		s.Out = Lst(Lst(fn, _Vddd(values...))._flatten()...) // call fn
+		s.Out = Lst(Lst(fn, _Vddd(values...))._flatten(true)...) // call fn
 	})
+	Default.Install("(unwrap-macro expr)", func(s *State) { s.Out = errorOrValue(s.Context.UnwrapMacro(s.In(0, 0))) })
 	Default.Install("(eval expr)", func(s *State) { s.Out = errorOrValue(s.Context.Exec(s.In(0, 0))) })
 	Default.Install("(parse expr-string)", func(s *State) { s.Out = errorOrValue(s.Context.Parse(s.In(0, 's').Str())) })
 	Default.Install("(null? a)", func(s *State) { s.Out = Bln(IsEmpty(s.In(0, 0))) })
@@ -264,7 +265,7 @@ func init() {
 		s.Out = __exec(Lst(_Vquote(s.In(1, 0))), execState{callAtom: &s.Out, local: s.Context})
 	})
 	Default.Install("(apply function (list a1 a2 ... an))", func(s *State) {
-		v, err := s.In(0, 'f').Fun().Call(s.In(1, 'l')._flatten()...)
+		v, err := s.In(0, 'f').Fun().Call(s.In(1, 'l')._flatten(true)...)
 		s.assert(err == nil || s.panic("apply panic: %v", err))
 		s.Out = v
 	})
@@ -498,10 +499,14 @@ TAIL_CALL:
 			state.args.list = new([]Value)
 		}
 
+		// tail, _ := Tail(c.Lst())
 		args := state.args
 		for i := 1; i < c._len(); i++ {
+			// _range(0, tail, func(i int, v Value) (Value, bool) {
 			state.args.start = len(*args.list)
 			*args.list = append(*args.list, __exec(c._at(i), state))
+			// 	return v, true
+			// })
 		}
 		s.Args = (*args.list)[args.start:]
 		*state.callAtom = c._at(0)
@@ -527,10 +532,17 @@ func (ctx *Context) Parse(text string) (Value, error) {
 	if perr != nil {
 		return Void, fmt.Errorf("parse: %v at %d:%d", perr, s.Pos().Line, s.Pos().Column)
 	}
-	if v.Type() == 'l' {
-		return begin(Void, v.Lst()...), err
+	if err != nil {
+		return Void, err
 	}
-	return begin(Void, v), err
+	if v.Type() == 'l' {
+		v = begin(Void, v.Lst()...)
+	} else {
+		v = begin(Void, v)
+	}
+	// log.Println(v)
+	return ctx.UnwrapMacro(v)
+	// log.Println(v)
 }
 
 func (ctx *Context) Exec(c Value) (output Value, err error) {
@@ -624,45 +636,71 @@ LOOP:
 			return comp[0], nil
 		}
 	}
-	return ctx.UnwrapMacro(comp)
+	return Lst(comp...), nil
 }
 
-func (ctx *Context) UnwrapMacro(comp []Value) (Value, error) {
-	if len(comp) == 0 {
-		return Lst(), nil
-	}
-
-	va, ok := comp[0]._atm()
-	if !ok {
-		return Lst(comp...), nil
-	}
-
-	if (va == "define" || va == "define#") && len(comp) >= 3 && comp[1].Type() == 'l' {
-		x := comp[1].Lst()
-		if len(x) == 0 {
-			return Void, fmt.Errorf("invalid binding list: %v", comp[1])
+func (ctx *Context) UnwrapMacro(v Value) (Value, error) {
+	var err error
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("macro unwrap panic: %v", r)
 		}
-		return Lst(comp[0].Rename("define"), x[0],
-			Lst(append([]Value{comp[0].Rename(ifstr(va == "define#", "lambda#", "lambda")),
-				Lst(x[1:]...)}, comp[2:]...)...)), nil
+	}()
+	return ctx.unwrapMacro(v).Flatten(true), err
+}
+
+func (ctx *Context) unwrapMacro(v Value) Value {
+	if v.Type() != 'l' || IsEmpty(v) {
+		return v
+	}
+
+	unwrapRest := func(v []Value) Value {
+		for comp := v; ; comp, _ = Tail(comp) {
+			if _, ok := Head(comp, ctx.unwrapMacro); !ok {
+				break
+			}
+		}
+		return Lst(v...)
+	}
+
+	comp := v.Lst()
+	head, _ := Head(comp, nil)
+	if head.Type() != 'a' {
+		return unwrapRest(comp)
+	}
+
+	va := head.Str()
+	if va == "define" || va == "define#" {
+		comp, _ := Tail(comp)                     // skip 'define*'
+		x, ok := Head(comp, nil)                  // get identifier
+		if ok && x.Type() == 'l' && !IsEmpty(x) { // (define (func paramlist) body...)
+			x := x._flatten(true) // flattern
+			comp, _ = Tail(comp)  // skip identifier
+			comp = unwrapRest(comp).Lst()
+			return Lst(head.Rename("define"), x[0],
+				Lst(append([]Value{head.Rename(ifstr(va == "define#", "lambda#", "lambda")),
+					Lst(x[1:]...)}, _Vddd(comp...))...))
+		}
 	}
 
 	m, _ := ctx.Load(va)
 	if !(m.Type() == 'f' && m.Fun().macro) {
-		return Lst(comp...), nil
+		return unwrapRest(comp)
 	}
-	comp[0] = _Vquote(m)
-	for i := 1; i < len(comp); i++ {
-		comp[i] = _Vquote(comp[i])
+
+	args := []Value{_Vquote(m)}
+
+	comp, _ = Tail(comp) // skip macro itself
+	for v, ok := Head(comp, nil); ok; v, ok = Head(comp, nil) {
+		args = append(args, _Vquote(ctx.unwrapMacro(v).Flatten(true)))
+		comp, _ = Tail(comp)
 	}
-	v, err := ctx.Exec(Lst(comp...))
+
+	v, err := ctx.Exec(Lst(args...))
 	if err != nil {
-		return Void, err
+		panic(err)
 	}
-	if v.Type() != 'l' {
-		return v, nil
-	}
-	return Lst(v._flatten()...), nil
+	return ctx.unwrapMacro(v)
 }
 
 func scanToDelim(s *scanner.Scanner) string {
@@ -734,16 +772,19 @@ func Last(v []Value, setter func(Value) Value) (Value, bool) {
 	return Void, false
 }
 
-func _range(idx int, v []Value, fn func(int, Value)) int {
-	for _, el := range v {
+func _range(idx int, v []Value, fn func(int, Value) (Value, bool)) (newidx int, cont bool) {
+	for i, el := range v {
 		if el.Type() != 'd' {
-			fn(idx, el)
+			v[i], cont = fn(idx, el)
 			idx++
 		} else {
-			idx = _range(idx, el.Lst(), fn)
+			idx, cont = _range(idx, el.Lst(), fn)
+		}
+		if !cont {
+			return idx, false
 		}
 	}
-	return idx
+	return idx, true
 }
 
 func Tail(v []Value) ([]Value, bool) {
@@ -963,7 +1004,7 @@ func (v Value) Val() interface{} {
 	case 's':
 		return vs
 	case 'l', 'd':
-		return v._flatten()
+		return v._flatten(false)
 	}
 	switch v.Type() {
 	case 'b':
@@ -1040,7 +1081,15 @@ func (v Value) _value() (vn float64, vs string, vq Value, vl []Value, vtype byte
 	}
 	return
 }
-func (v Value) _flatten() []Value {
+
+func (v Value) Flatten(inplace bool) Value {
+	if v.Type() != 'l' {
+		return v
+	}
+	return Lst(v._flatten(inplace)...)
+}
+
+func (v Value) _flatten(inplaceIfPossible bool) []Value {
 	ex := 0
 	for _, e := range v.Lst() {
 		if x := e.Type(); x == 'd' || x == 'l' {
@@ -1048,15 +1097,18 @@ func (v Value) _flatten() []Value {
 		}
 	}
 	if ex == 0 {
+		if inplaceIfPossible {
+			return v.Lst()
+		}
 		return append([]Value{}, v.Lst()...)
 	}
 	r := make([]Value, 0, ex+v._len())
 	for _, e := range v.Lst() {
 		switch e.Type() {
 		case 'd':
-			r = append(r, e._flatten()...)
+			r = append(r, e._flatten(inplaceIfPossible)...)
 		case 'l':
-			r = append(r, Lst(e._flatten()...))
+			r = append(r, Lst(e._flatten(inplaceIfPossible)...))
 		default:
 			r = append(r, e)
 		}

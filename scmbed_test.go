@@ -92,12 +92,24 @@ func TestOne(t *testing.T) {
 	it.Install("#(iff)", func(s *State) {
 		s.Out = s.In(1, 0)
 	})
+	assert("(eval (unwrap-macro (list 'define `(madd2 a ,(atom \"b\")) (list 'let `[(c ,(cons '+ (cons 'a (cons 'b [] ))) )] '(* (let ((a a)) a) b c))")
+	assert(`(define# (let*-native bindings)
+		(define body (append '(if () ()) (rest-args)))
+		(letrec ((work (lambda (lst)
+			(if (not (null? lst)) (begin
+				(set! body (list 'let (list (last lst)) body))
+				(work (init lst))
+			))))) (work bindings))
+		body
+	)`)
+	assert(`(assert (= (madd2 10 20) 6000)))`)
 	assert("(assert (= #/中 0x4e2d")
 	assert(`(if #f (+ 1 #| inline || comment (assert false) #|#  2 3.5) (lambda (a b) ())`)
 	assert(`(assert ( [lambda* (a b) (assert (= a 1)) (null? b)] 1) `)
 	assert(`( [lambda* (a [b (+ a 1)] ) (assert (= a 1)) (assert (= b 2))] 1) `)
 	assert(`( [lambda* (a b c...) (assert (= 1 (length c))) (assert (car c))] 1 2 #t) `)
 	assert("(let* ((a 1) (b (+ a 1))) (assert (= b 2))")
+	assert("(let*-native ((a 1) (b (+ a 1)) (c (+ b a))) (assert (= c 3))")
 	assert(`
 	 (define (list-eq? list1 list2)
 	 	(if (and (list? list1) (list? list2))
@@ -349,10 +361,11 @@ ALL:
 		i--
 	}
 
-	_range(0, list3, func(idx int, v Value) {
+	_range(0, list3, func(idx int, v Value) (Value, bool) {
 		n := v.Num()
 		if int(n) != idx {
 			t.Fatal(v, idx)
 		}
+		return v, true
 	})
 }

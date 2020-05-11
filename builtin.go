@@ -8,7 +8,6 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
-	"log"
 	"os"
 	"reflect"
 	"regexp"
@@ -110,9 +109,9 @@ func init() {
 			innerbinds[i] = Lst(tmpvar, b[1])
 			outerbinds[i] = Lst(b[0], Void)
 		}
-		inner, _ := s.Context.UnwrapMacro(Lst(let, Lst(innerbinds...), _Vddd(innersets...), _Vddd(s.Args[1:]...))._flatten())
-		outer, _ := s.Context.UnwrapMacro([]Value{let, Lst(outerbinds...), inner})
-		s.Out = outer
+		inner := Lst(let, Lst(innerbinds...), _Vddd(innersets...), _Vddd(s.Args[1:]...))._flatten(true)
+		outer := []Value{let, Lst(outerbinds...), Lst(inner...)}
+		s.Out = Lst(outer...)
 	})
 	Default.Install("#(let* ((var1 val1) ... (varn valn)) expr...)", func(s *State) {
 		/* Unwrap to:
@@ -127,9 +126,8 @@ func init() {
 			bd := binds[i]
 			s.assert(bd.Type() == 'l' || s.panic("invalid binding list format: %v", bd))
 			s.assert(bd._len() == 2 && bd._at(0).Type() == 'a' && bd._at(0).Str() != "" || s.panic("invalid binding list format: %v", bd))
-			last, _ = s.Context.UnwrapMacro([]Value{let, Lst(bd), begin(s.Caller, last)})
+			last = Lst(let, Lst(bd), begin(s.Caller, last))
 		}
-		log.Println(last)
 		s.Out = last
 	})
 	Default.Install("#(i64 @value)", func(s *State) {
@@ -145,7 +143,6 @@ func init() {
 			s.Out = Val(v)
 		}
 	})
-	Default.Install("(unwrap-macro expr)", func(s *State) { s.Out = errorOrValue(s.Context.UnwrapMacro(s.In(0, 'l').Lst())) })
 	Default.Install("(list-depth list)", func(s *State) { s.Out = Val(maxdepth(s.In(0, 'l').Lst())) })
 	Default.Install("(go-value-wrap a)", func(s *State) { s.Out = ValRec(s.In(0, 0).Val()) })
 	Default.Install("(map-new key0 value0 key1 value1 ...)", func(s *State) {
@@ -518,7 +515,7 @@ func init() {
 					case token.LOR:
 						op = "or"
 					}
-					m, _ := s.Context.UnwrapMacro([]Value{Atm(op, 0, 0), do(e.X), do(e.Y)})
+					m := Lst(Atm(op, 0, 0), do(e.X), do(e.Y))
 					return m
 				case *ast.BasicLit:
 					switch e.Kind {
