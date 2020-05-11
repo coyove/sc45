@@ -50,10 +50,10 @@ type (
 	}
 	execState struct {
 		assertable
-		callAtom *Value
-		local    *Context
-		quasi    bool
-		args     struct { // all go native calls share the same stack: args.list, each used region is identified by args.start
+		curCaller *Value
+		local     *Context
+		quasi     bool
+		args      struct { // all go native calls share the same stack: args.list, each used region is identified by args.start
 			start int
 			list  *[]Value
 		}
@@ -85,7 +85,7 @@ func init() {
 	})
 	Default.Install("#(and bool...)", func(s *State) {
 		if len(s.Args) == 0 {
-			s.Out = Atm("true", 0, 0)
+			s.Out = Sym("true", 0, 0)
 			return
 		}
 		var build func(lhs Value, args []Value) Value
@@ -93,13 +93,13 @@ func init() {
 			if len(args) == 0 {
 				return lhs
 			}
-			return Lst(s.Caller.Rename("if"), lhs, build(args[0], args[1:]), Atm("false", 0, 0))
+			return Lst(s.Caller.Make("if"), lhs, build(args[0], args[1:]), Sym("false", 0, 0))
 		}
 		s.Out = build(s.Args[0], s.Args[1:])
 	})
 	Default.Install("#(or bool...)", func(s *State) {
 		if len(s.Args) == 0 {
-			s.Out = Atm("false", 0, 0)
+			s.Out = Sym("false", 0, 0)
 			return
 		}
 		var build func(lhs Value, args []Value) Value
@@ -107,7 +107,7 @@ func init() {
 			if len(args) == 0 {
 				return lhs
 			}
-			return Lst(s.Caller.Rename("if"), lhs, Atm("true", 0, 0), build(args[0], args[1:]))
+			return Lst(s.Caller.Make("if"), lhs, Sym("true", 0, 0), build(args[0], args[1:]))
 		}
 		s.Out = build(s.Args[0], s.Args[1:])
 	})
@@ -140,12 +140,8 @@ func init() {
 		}
 		s.Out = Bln(true)
 	})
-	Default.Install("#(> a a...)", func(s *State) {
-		s.Out = Lst(s.Caller.Rename("not"), Lst(append([]Value{s.Caller.Rename("<=")}, s.Args...)...))
-	})
-	Default.Install("#(>= a a...)", func(s *State) {
-		s.Out = Lst(s.Caller.Rename("not"), Lst(append([]Value{s.Caller.Rename("<")}, s.Args...)...))
-	})
+	Default.Install("#(> a a...)", func(s *State) { s.Out = Lst(s.Caller.Make("not"), Lst(s.Caller.Make("<="), _Vddd(s.Args))) })
+	Default.Install("#(>= a a...)", func(s *State) { s.Out = Lst(s.Caller.Make("not"), Lst(s.Caller.Make("<"), _Vddd(s.Args))) })
 	Default.Install("(not bool)", func(s *State) { s.Out = Bln(!s.In(0, 0).IsTrue()) })
 	Default.Install("(+ num-str num-str...)", func(s *State) {
 		s.Out = s.In(0, 0)
@@ -198,10 +194,10 @@ func init() {
 		for _, pair := range s.In(0, 'l').Lst() {
 			s.assert(pair.Type() == 'l' || s.panic("invalid binding list format: %v", pair))
 			p := pair.Lst()
-			s.assert(len(p) == 2 && p[0].Type() == 'a' && p[0].Str() != "" || s.panic("invalid binding list format: %v", pair))
+			s.assert(len(p) == 2 && p[0].Type() == 'y' && p[0].Str() != "" || s.panic("invalid binding list format: %v", pair))
 			names, values = append(names, p[0]), append(values, p[1])
 		}
-		fn := Lst(s.Caller.Rename("lambda"), Lst(names...), begin(s.Caller, s.Args[1:]...))
+		fn := Lst(s.Caller.Make("lambda"), Lst(names...), begin(s.Caller, s.Args[1:]...))
 		s.Out = Lst(fn, _Vddd(values)).Flatten(true) // call fn
 	})
 	Default.Install("(unwrap-macro expr)", func(s *State) { s.Out = errorOrValue(s.Context.UnwrapMacro(s.In(0, 0))) })
@@ -217,14 +213,9 @@ func init() {
 		s.assert(ok || s.panic("set-last!: empty list"))
 	})
 	Default.Install("(number text)", func(s *State) { s.Out = errorOrValue(strconv.ParseFloat(s.In(0, 's').Str(), 64)) })
-	Default.Install("(string a)", func(s *State) {
-		if x := s.In(0, 0).Type(); x == 'a' || x == 's' {
-			s.Out = s.In(0, 0)
-		} else {
-			s.Out = Str(s.In(0, 0).String())
-		}
-	})
-	Default.Install("(atom string)", func(s *State) { s.Out = Atm(s.In(0, 's').Str(), 0, 0) })
+	Default.Install("(symbol->string a)", func(s *State) { s.Out = Str(s.In(0, 'y').Str()) })
+	Default.Install("(number->string a)", func(s *State) { s.Out = Str(strconv.FormatFloat(s.In(0, 'n').Num(), 'f', -1, 64)) })
+	Default.Install("(string->symbol string)", func(s *State) { s.Out = Sym(s.In(0, 's').Str(), 0, 0) })
 	Default.Install("(list v1 v2 ... vn)", func(s *State) { s.Out = Lst(append([]Value{}, s.Args...)...) })
 	Default.Install("(append list list2)", func(s *State) { s.Out = Lst(_Vddd(s.In(0, 'l').Lst()), _Vddd(s.In(1, 'l').Lst())) })
 	Default.Install("(add list a)", func(s *State) { s.Out = Lst(_Vddd(s.In(0, 'l').Lst()), s.In(1, 0)) })
@@ -261,7 +252,7 @@ func init() {
 				}
 			}
 		}()
-		s.Out = __exec(Lst(_Vquote(s.In(1, 0))), execState{callAtom: &s.Out, local: s.Context})
+		s.Out = __exec(Lst(_Vquote(s.In(1, 0))), execState{curCaller: &s.Out, local: s.Context})
 	})
 	Default.Install("(apply function (list a1 a2 ... an))", func(s *State) {
 		v, err := s.In(0, 'f').Fun().Call(s.In(1, 'l')._flatten(true)...)
@@ -272,7 +263,7 @@ func init() {
 	Default.Install("(error? a)", func(s *State) { _, ok := s.In(0, 0).Val().(error); s.Out = Bln(ok) })
 	Default.Install("(void? a)", func(s *State) { s.Out = Bln(s.In(0, 0).IsVoid()) })
 	Default.Install("(list? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'l') })
-	Default.Install("(atom? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'a') })
+	Default.Install("(symbol? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'y') })
 	Default.Install("(bool? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'b') })
 	Default.Install("(number? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 'n') })
 	Default.Install("(string? a)", func(s *State) { s.Out = Bln(s.In(0, 0).Type() == 's') })
@@ -368,7 +359,7 @@ func (m *Context) Copy() *Context {
 func __exec(expr Value, state execState) Value {
 	if state.quasi {
 		if expr.Type() == 'l' && expr._len() > 0 {
-			if x := expr._at(0); x.Type() == 'a' && x.Str() == "unquote" {
+			if x := expr._at(0); x.Type() == 'y' && x.Str() == "unquote" {
 				state.assert(expr._len() == 2 || state.panic("invalid unquote syntax"))
 				state.quasi = false
 				v := __exec(expr._at(1), state)
@@ -388,7 +379,7 @@ TAIL_CALL:
 	switch _, va, vq, _, vtype := expr._value(); vtype {
 	case 'q':
 		return vq
-	case 'a':
+	case 'y':
 		v, ok := state.local.Load(va)
 		state.assert(ok || state.panic("unbound %q", va))
 		return v
@@ -403,8 +394,8 @@ TAIL_CALL:
 		return Empty
 	}
 
-	if *state.callAtom = c._at(0); state.callAtom.Type() == 'a' {
-		switch va := state.callAtom.Str(); va {
+	if *state.curCaller = c._at(0); state.curCaller.Type() == 'y' {
+		switch va := state.curCaller.Str(); va {
 		case "if":
 			state.assert(c._len() >= 3 || state.panic("invalid if syntax"))
 			if __exec(c._at(1), state).IsTrue() {
@@ -426,11 +417,11 @@ TAIL_CALL:
 				f.n = begin(c._at(0), c.Lst()[2:]...)
 			}
 			switch _, va, _, bindings, vtype := c._at(1)._value(); vtype {
-			case 'a':
+			case 'y':
 				f.nargs, f.varg = []string{va}, true
 			case 'l':
 				for i, n := range bindings {
-					state.assert(n.Type() == 'a' || state.panic("invalid parameter %d, expect valid atom", i+1))
+					state.assert(n.Type() == 'y' || state.panic("invalid parameter %d, expect valid symbol", i+1))
 					f.nargs = append(f.nargs, n.Str())
 				}
 			default:
@@ -449,14 +440,14 @@ TAIL_CALL:
 		case "unquote":
 			panic(fmt.Errorf("unquote outside quasiquote"))
 		case "set!":
-			state.assert(c._len() == 3 && c._at(1).Type() == 'a' || state.panic("invalid set! syntax"))
+			state.assert(c._len() == 3 && c._at(1).Type() == 'y' || state.panic("invalid set! syntax"))
 			x := c._at(1).Str()
 			_, m := state.local.find(x)
 			state.assert(m != nil || state.panic("set!: unbound %s", x))
 			m.set(x, __exec(c._at(2), state))
 			return Void
 		case "define":
-			state.assert(c._len() == 3 && c._at(1).Type() == 'a' || state.panic("invalid define syntax"))
+			state.assert(c._len() == 3 && c._at(1).Type() == 'y' || state.panic("invalid define syntax"))
 			x := c._at(1).Str()
 			_, ok := state.local.m[x]
 			state.assert(!ok || state.panic("re-define %s", x))
@@ -491,7 +482,7 @@ TAIL_CALL:
 			m.set(cc.nargs[0], Lst(values...))
 			m.set("\x00", Lst(values...))
 		}
-		*state.callAtom = c._at(0)
+		*state.curCaller = c._at(0)
 		state.local, expr = m, cc.n
 		goto TAIL_CALL
 	}
@@ -508,15 +499,14 @@ TAIL_CALL:
 	}
 
 	s.Args = (*args.list)[args.start:]
-	*state.callAtom = c._at(0)
+	*state.curCaller = c._at(0)
 	cc.f(&s)
 	*args.list = (*args.list)[:args.start]
 	return s.Out
 }
 
-func (ctx *Context) Parse(text string) (Value, error) {
+func (ctx *Context) Parse(text string) (expr Value, err error) {
 	var s scanner.Scanner
-	var err error
 	s.Init(strings.NewReader(text))
 	s.Mode &^= scanner.ScanChars | scanner.ScanRawStrings
 	s.Error = func(s *scanner.Scanner, msg string) {
@@ -543,16 +533,16 @@ func (ctx *Context) Parse(text string) (Value, error) {
 }
 
 func (ctx *Context) Exec(c Value) (output Value, err error) {
-	var callAtom Value
+	var curCaller Value
 	defer func() {
 		if r := recover(); r != nil {
 			if os.Getenv("SBD_STACK") != "" {
 				fmt.Println(string(debug.Stack()))
 			}
-			err = fmt.Errorf("%v at %v", r, callAtom)
+			err = fmt.Errorf("%v at %v", r, curCaller)
 		}
 	}()
-	return __exec(c, execState{local: ctx, callAtom: &callAtom}), nil
+	return __exec(c, execState{local: ctx, curCaller: &curCaller}), nil
 }
 
 func (ctx *Context) Run(tmpl string) (result interface{}, err error) {
@@ -594,7 +584,7 @@ LOOP:
 				}
 				comp = append(comp, Num(float64(r)))
 			default:
-				comp = append(comp, Atm("#"+scanToDelim(s), (s.Pos().Line), (s.Pos().Column)))
+				comp = append(comp, Sym("#"+scanToDelim(s), (s.Pos().Line), (s.Pos().Column)))
 			}
 		case ';':
 			for ; ; s.Scan() {
@@ -618,7 +608,7 @@ LOOP:
 			if c.IsVoid() {
 				return Void, fmt.Errorf("invalid *quote syntax")
 			}
-			comp = append(comp, Lst(Atm(ifstr(tok == '\'', "quote", ifstr(tok == '`', "quasiquote", "unquote")), 0, 0), c))
+			comp = append(comp, Lst(Sym(ifstr(tok == '\'', "quote", ifstr(tok == '`', "quasiquote", "unquote")), 0, 0), c))
 		default:
 			text := s.TokenText() + scanToDelim(s)
 			if v, ok := strconv.ParseInt(text, 0, 64); ok == nil || tok == scanner.Int {
@@ -626,7 +616,7 @@ LOOP:
 			} else if v, ok := strconv.ParseFloat(text, 64); ok == nil || tok == scanner.Float {
 				comp = append(comp, Num(v))
 			} else {
-				comp = append(comp, Atm(text, (s.Pos().Line), (s.Pos().Column)))
+				comp = append(comp, Sym(text, (s.Pos().Line), (s.Pos().Column)))
 			}
 		}
 		if scanOne && len(comp) >= 1 {
@@ -662,7 +652,7 @@ func (ctx *Context) unwrapMacro(v Value) Value {
 
 	comp := v.Lst()
 	head, _ := Head(comp, false, nil)
-	if head.Type() != 'a' {
+	if head.Type() != 'y' {
 		return unwrapRest(comp)
 	}
 
@@ -674,8 +664,8 @@ func (ctx *Context) unwrapMacro(v Value) Value {
 			x := x._flatten(true) // flattern
 			comp, _ = Tail(comp)  // skip identifier
 			comp = unwrapRest(comp).Lst()
-			return Lst(head.Rename("define"), x[0],
-				Lst(append([]Value{head.Rename(ifstr(va == "define#", "lambda#", "lambda")),
+			return Lst(head.Make("define"), x[0],
+				Lst(append([]Value{head.Make(ifstr(va == "define#", "lambda#", "lambda")),
 					Lst(x[1:]...)}, _Vddd(comp))...))
 		}
 	}
@@ -720,7 +710,7 @@ func itfLess(s *State, a Value, i int) bool {
 	case 's':
 		return vs < s.In(i, 's').Str()
 	}
-	panic(fmt.Errorf("argument #%d: %v and %v are not comparable", i, a, s.In(i, 0)))
+	panic(fmt.Errorf("argument #%d and #%d: %v and %v are not comparable", i-1, i, a, s.In(i, 0)))
 }
 
 func (e *assertable) assert(ok bool) {
@@ -820,7 +810,7 @@ func ifstr(v bool, a, b string) string {
 }
 
 func begin(lead Value, exprs ...Value) Value {
-	return Lst(append([]Value{lead.Rename("if"), Empty, Empty}, exprs...)...)
+	return Lst(append([]Value{lead.Make("if"), Empty, Empty}, exprs...)...)
 }
 
 // zzzzzzzz
@@ -892,8 +882,8 @@ func Bln(v bool) Value {
 	}
 	return Value{val: 0, flag: -'b'}
 }
-func Atm(v string, line, col int) Value {
-	return Value{flag: -'a', ptr: unsafe.Pointer(&v), val: math.Float64frombits(uint64(line)<<32 | uint64(col))}
+func Sym(v string, line, col int) Value {
+	return Value{flag: -'y', ptr: unsafe.Pointer(&v), val: math.Float64frombits(uint64(line)<<32 | uint64(col))}
 }
 func Lst(l ...Value) Value {
 	if len(l) == 0 {
@@ -912,10 +902,10 @@ func (v *Value) _itfptr() *interface{} { return (*interface{})(unsafe.Pointer(v)
 func (v Value) IsVoid() bool           { return v == Value{} }
 func (v Value) IsTrue() bool           { return v.flag == -'b' && v.val == 1 }
 
-// Type returns the type of Value: 'b'ool, 'n'umber, 'l'ist, 's'tring, 'f'unc, 'a'tom, 'i'nterface, 'v'oid
+// Type returns the type of Value: 'b'ool, 'n'umber, 'l'ist, 's'tring, 'f'unc, s'y'mbol, 'i'nterface, 'v'oid
 func (v Value) Type() byte {
 	switch v.flag {
-	case -'n', -'b', -'l', -'d', -'q', -'f', -'s', -'a':
+	case -'n', -'b', -'l', -'d', -'q', -'f', -'s', -'y':
 		return byte(-v.flag)
 	default:
 		if v == (Value{}) {
@@ -936,11 +926,9 @@ func (v Value) String() string {
 		return strconv.FormatFloat(vn, 'f', -1, 64)
 	case 's':
 		return strconv.Quote(vs)
-	case 'a':
-		if line, col := v.Pos(); line > 0 {
-			return vs + fmt.Sprintf(" /*%d:%d*/", line, col)
-		}
-		return vs
+	case 'y':
+		line, col := v.Pos()
+		return vs + ifstr(line > 0, fmt.Sprintf(" /*%d:%d*/", line, col), "")
 	case 'l', 'd':
 		p := bytes.NewBufferString(ifstr(vtype == 'l', "(", "/*{*/ "))
 		for _, e := range vl {
@@ -990,12 +978,12 @@ func (v Value) Val() interface{} {
 	}
 }
 
-func (v Value) Rename(text string) Value {
-	if v.Type() == 'a' {
+func (v Value) Make(text string) Value {
+	if v.Type() == 'y' {
 		v.ptr = unsafe.Pointer(&text)
 		return v
 	}
-	return Atm(text, 0, 0)
+	return Sym(text, 0, 0)
 }
 
 func (v Value) Equals(v2 Value) bool {
@@ -1003,7 +991,7 @@ func (v Value) Equals(v2 Value) bool {
 		return true
 	}
 	if v.flag == v2.flag {
-		if v.flag == -'a' || v.flag == -'s' {
+		if v.flag == -'y' || v.flag == -'s' {
 			return *(*string)(v.ptr) == *(*string)(v2.ptr)
 		}
 		if v.flag > 0 {
@@ -1044,7 +1032,7 @@ func (v Value) _value() (vn float64, vs string, vq Value, vl []Value, vtype byte
 		vl, vtype = v.Lst(), byte(-v.flag)
 	case -'q':
 		vq, vtype = *(*Value)(v.ptr), 'q'
-	case -'s', -'a':
+	case -'s', -'y':
 		vs, vtype = *(*string)(v.ptr), byte(-v.flag)
 	default:
 		if v.IsVoid() {

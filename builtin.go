@@ -96,16 +96,16 @@ func init() {
 				(set! 'varn varb_tmp)
 				expr...                                // expressions
 		*/
-		let, binds := s.Caller.Rename("let"), s.In(0, 'l').Lst()
+		let, binds := s.Caller.Make("let"), s.In(0, 'l').Lst()
 		innersets := make([]Value, len(binds))
 		innerbinds := make([]Value, len(binds))
 		outerbinds := make([]Value, len(binds))
 		for i := range binds {
 			s.assert(binds[i].Type() == 'l' || s.panic("invalid binding list format: %v", binds[i]))
 			b := binds[i].Lst()
-			s.assert(len(b) == 2 && b[0].Type() == 'a' && b[0].Str() != "" || s.panic("invalid binding list format: %v", binds[i]))
-			tmpvar := Atm(b[0].Str()+"tmp", 0, 0)
-			innersets[i] = Lst(Atm("set!", 0, 0), b[0], tmpvar)
+			s.assert(len(b) == 2 && b[0].Type() == 'y' && b[0].Str() != "" || s.panic("invalid binding list format: %v", binds[i]))
+			tmpvar := Sym(b[0].Str()+"tmp", 0, 0)
+			innersets[i] = Lst(Sym("set!", 0, 0), b[0], tmpvar)
 			innerbinds[i] = Lst(tmpvar, b[1])
 			outerbinds[i] = Lst(b[0], Void)
 		}
@@ -120,18 +120,18 @@ func init() {
 				...
 					expr...
 		*/
-		let, binds := s.Caller.Rename("let"), s.In(0, 'l').Lst()
+		let, binds := s.Caller.Make("let"), s.In(0, 'l').Lst()
 		last := begin(s.Caller, s.Args[1:]...)
 		for i := len(binds) - 1; i >= 0; i-- {
 			bd := binds[i]
 			s.assert(bd.Type() == 'l' || s.panic("invalid binding list format: %v", bd))
-			s.assert(bd._len() == 2 && bd._at(0).Type() == 'a' && bd._at(0).Str() != "" || s.panic("invalid binding list format: %v", bd))
+			s.assert(bd._len() == 2 && bd._at(0).Type() == 'y' && bd._at(0).Str() != "" || s.panic("invalid binding list format: %v", bd))
 			last = Lst(let, Lst(bd), begin(s.Caller, last))
 		}
 		s.Out = last
 	})
 	Default.Install("#(i64 @value)", func(s *State) {
-		t, unsigned := strings.TrimPrefix(s.In(0, 'a').Str(), "@"), false
+		t, unsigned := strings.TrimPrefix(s.In(0, 'y').Str(), "@"), false
 		if strings.HasPrefix(t, "u") {
 			t, unsigned = t[1:], true
 		}
@@ -173,10 +173,10 @@ func init() {
 	Default.Install("#(lambda* (paramlist) body)", func(s *State) {
 		tmpvar := "a" + strconv.FormatInt(time.Now().Unix(), 10)
 		pl, body := s.In(0, 'l').Lst(), []Value{
-			s.Caller.Rename("lambda"),
-			s.Caller.Rename(tmpvar),
-			Lst(s.Caller.Rename("define"), s.Caller.Rename(tmpvar+"-len"), Lst(
-				s.Caller.Rename("vector-len"), s.Caller.Rename(tmpvar),
+			s.Caller.Make("lambda"),
+			s.Caller.Make(tmpvar),
+			Lst(s.Caller.Make("define"), s.Caller.Make(tmpvar+"-len"), Lst(
+				s.Caller.Make("vector-len"), s.Caller.Make(tmpvar),
 			)),
 		}
 		/*
@@ -190,14 +190,14 @@ func init() {
 		*/
 		for i := range pl {
 			var name, val Value
-			if pl[i].Type() == 'a' {
+			if pl[i].Type() == 'y' {
 				name, val = pl[i], Empty
 				if a := pl[i].Str(); strings.HasSuffix(a, "...") {
 					// Special case: "name..." to catch the rest arguments
 					body = append(body, Lst(
-						s.Caller.Rename("define"),
-						s.Caller.Rename(ifstr(len(a) == 3, "...", a[:len(a)-3])),
-						Lst(s.Caller.Rename("skip"), Num(float64(i)), s.Caller.Rename(tmpvar)),
+						s.Caller.Make("define"),
+						s.Caller.Make(ifstr(len(a) == 3, "...", a[:len(a)-3])),
+						Lst(s.Caller.Make("skip"), Num(float64(i)), s.Caller.Make(tmpvar)),
 					))
 					continue
 				}
@@ -206,12 +206,12 @@ func init() {
 				name, val = pl[i]._at(0), pl[i]._at(1)
 			}
 			body = append(body, Lst(
-				s.Caller.Rename("define"),
+				s.Caller.Make("define"),
 				name,
 				Lst(
-					s.Caller.Rename("if"),
-					Lst(s.Caller.Rename("<"), Num(float64(i)), s.Caller.Rename(tmpvar+"-len")),
-					Lst(s.Caller.Rename("vector-nth"), s.Caller.Rename(tmpvar), Num(float64(i))),
+					s.Caller.Make("if"),
+					Lst(s.Caller.Make("<"), Num(float64(i)), s.Caller.Make(tmpvar+"-len")),
+					Lst(s.Caller.Make("vector-nth"), s.Caller.Make(tmpvar), Num(float64(i))),
 					val,
 				),
 			))
@@ -256,11 +256,11 @@ func init() {
 		}
 	})
 	Default.Install("(define-record 'name 'field1 ... 'fieldn)", func(s *State) {
-		name, fields, typename := s.In(0, 'a').Str(), make(map[string]int, len(s.Args)-1), new(int)
+		name, fields, typename := s.In(0, 'y').Str(), make(map[string]int, len(s.Args)-1), new(int)
 		for i := 1; i < len(s.Args); i++ {
-			fields[s.In(i, 'a').Str()] = i
+			fields[s.In(i, 'y').Str()] = i
 			func(i int) {
-				name := name + "-" + s.In(i, 'a').Str()
+				name := name + "-" + s.In(i, 'y').Str()
 
 				s.Context.Store(name, Fun(&Func{f: func(ss *State) { // getter
 					ss.assert(len(ss.In(0, 'l').Lst()) == len(s.Args) && ss.In(0, 'l').Lst()[0].Val() == typename || ss.panic("not a %s record", name))
@@ -285,7 +285,7 @@ func init() {
 				out[i] = Void
 			}
 			for i := 0; i < len(ss.Args); i += 2 {
-				fieldname := ss.In(i, 'a').Str()
+				fieldname := ss.In(i, 'y').Str()
 				ss.assert(fields[fieldname] != 0 || ss.panic("field %s not found", fieldname))
 				out[fields[fieldname]] = ss.In(i+1, 0)
 			}
@@ -327,16 +327,16 @@ func init() {
 	})
 	Default.Install("#(cond (cond1 stat1) (cond2 stat2) ... (else catch-all)?)", func(s *State) {
 		if len(s.Args) == 0 {
-			s.Out = s.Caller.Rename("true")
+			s.Out = s.Caller.Make("true")
 			return
 		}
 		build := func(expr Value) []Value {
 			s.assert(expr.Type() == 'l' && expr._len() == 2 || s.panic("invalid cond statement: %v", expr))
 			cond, stat := expr.Lst()[0], expr.Lst()[1]
-			if cond.Type() == 'a' && cond.Str() == "else" {
-				cond = s.Caller.Rename("true")
+			if cond.Type() == 'y' && cond.Str() == "else" {
+				cond = s.Caller.Make("true")
 			}
-			return []Value{s.Caller.Rename("if"), cond, stat, Void}
+			return []Value{s.Caller.Make("if"), cond, stat, Void}
 		}
 		exprs := build(s.In(0, 0))
 		for i, head := 1, exprs; i < len(s.Args); i++ {
@@ -355,7 +355,7 @@ func init() {
 	Default.Install("(struct-get 'field1 ... 'fieldn struct)", func(s *State) {
 		rv := reflect.ValueOf(s.In(len(s.Args)-1, 0).Val())
 		for i := 0; i < len(s.Args)-1; i++ {
-			m := s.In(i, 'a').Str()
+			m := s.In(i, 'y').Str()
 			if rv.Kind() == reflect.Ptr {
 				rv = rv.Elem()
 			}
@@ -385,7 +385,7 @@ func init() {
 			f = f.Elem()
 		}
 		for i := 0; i < len(s.Args)-2; i++ {
-			m := s.In(i, 'a').Str()
+			m := s.In(i, 'y').Str()
 			f = f.FieldByName(m)
 			if i != len(s.Args)-3 { // not last atom
 				s.assert(f.IsValid() || s.panic("field %q not found", m))
@@ -446,28 +446,28 @@ func init() {
 		})
 	Default.Install("#(setf! structname.Field1.Field2...Fieldn value)",
 		func(s *State) {
-			a := s.In(0, 'a').Str()
+			a := s.In(0, 'y').Str()
 			parts := strings.Split(a, ".")
 			s.assert(len(parts) > 1 || s.panic("too few fields to set"))
 			structname := parts[0]
-			setter := []Value{s.In(0, 0).Rename("struct-set!")}
+			setter := []Value{s.In(0, 0).Make("struct-set!")}
 			for i := 1; i < len(parts); i++ {
-				setter = append(setter, _Vquote(s.In(0, 0).Rename(parts[i])))
+				setter = append(setter, _Vquote(s.In(0, 0).Make(parts[i])))
 			}
-			setter = append(setter, s.In(1, 0), s.In(0, 0).Rename(structname))
+			setter = append(setter, s.In(1, 0), s.In(0, 0).Make(structname))
 			s.Out = Lst(setter...)
 		})
 	Default.Install("#(getf structname.Field1.Field2...Fieldn)",
 		func(s *State) {
-			a := s.In(0, 'a').Str()
+			a := s.In(0, 'y').Str()
 			parts := strings.Split(a, ".")
 			s.assert(len(parts) > 1 || s.panic("too few fields to get"))
 			structname := parts[0]
-			setter := []Value{s.In(0, 0).Rename("struct-get")}
+			setter := []Value{s.In(0, 0).Make("struct-get")}
 			for i := 1; i < len(parts); i++ {
-				setter = append(setter, _Vquote(s.In(0, 0).Rename(parts[i])))
+				setter = append(setter, _Vquote(s.In(0, 0).Make(parts[i])))
 			}
-			setter = append(setter, s.In(0, 0).Rename(structname))
+			setter = append(setter, s.In(0, 0).Make(structname))
 			s.Out = Lst(setter...)
 		})
 
@@ -506,7 +506,7 @@ func init() {
 					case token.NOT:
 						op = "not"
 					}
-					return Lst(Atm(op, 0, 0), do(e.X))
+					return Lst(Sym(op, 0, 0), do(e.X))
 				case *ast.BinaryExpr:
 					op := e.Op.String()
 					switch e.Op {
@@ -515,7 +515,7 @@ func init() {
 					case token.LOR:
 						op = "or"
 					}
-					m := Lst(Atm(op, 0, 0), do(e.X), do(e.Y))
+					m := Lst(Sym(op, 0, 0), do(e.X), do(e.Y))
 					return m
 				case *ast.BasicLit:
 					switch e.Kind {
@@ -530,7 +530,7 @@ func init() {
 						return Str(v)
 					}
 				case *ast.Ident:
-					return Atm(e.Name, 0, 0)
+					return Sym(e.Name, 0, 0)
 				case *ast.ParenExpr:
 					return do(e.X)
 				case *ast.CallExpr:

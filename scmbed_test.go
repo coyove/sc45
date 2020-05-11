@@ -92,7 +92,7 @@ func TestOne(t *testing.T) {
 	it.Install("#(iff)", func(s *State) {
 		s.Out = s.In(1, 0)
 	})
-	assert("(eval (unwrap-macro (list 'define `(madd2 a ,(atom \"b\")) (list 'let `[(c ,(cons '+ (cons 'a (cons 'b [] ))) )] '(* (let ((a a)) a) b c))")
+	assert("(eval (unwrap-macro (list 'define `(madd2 a ,(string->symbol \"b\")) (list 'let `[(c ,(cons '+ (cons 'a (cons 'b [] ))) )] '(* (let ((a a)) a) b c))")
 	assert(`(define# (let*-native bindings)
 		(define body (append '(if () ()) (rest-args)))
 		(letrec ((work (lambda (lst)
