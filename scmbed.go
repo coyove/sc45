@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"os"
 	"reflect"
@@ -158,7 +157,7 @@ func init() {
 			s.Out = Num(vn)
 		case 'l':
 			for i := 1; i < len(s.Args); i++ {
-				vl = []Value{_Vddd(vl...), _Vddd(s.In(i, 'l').Lst()...)}
+				vl = []Value{_Vddd(vl), _Vddd(s.In(i, 'l').Lst())}
 			}
 			s.Out = Lst(vl...)
 		case 's':
@@ -203,18 +202,18 @@ func init() {
 			names, values = append(names, p[0]), append(values, p[1])
 		}
 		fn := Lst(s.Caller.Rename("lambda"), Lst(names...), begin(s.Caller, s.Args[1:]...))
-		s.Out = Lst(Lst(fn, _Vddd(values...))._flatten(true)...) // call fn
+		s.Out = Lst(fn, _Vddd(values)).Flatten(true) // call fn
 	})
 	Default.Install("(unwrap-macro expr)", func(s *State) { s.Out = errorOrValue(s.Context.UnwrapMacro(s.In(0, 0))) })
 	Default.Install("(eval expr)", func(s *State) { s.Out = errorOrValue(s.Context.Exec(s.In(0, 0))) })
 	Default.Install("(parse expr-string)", func(s *State) { s.Out = errorOrValue(s.Context.Parse(s.In(0, 's').Str())) })
 	Default.Install("(null? a)", func(s *State) { s.Out = Bln(IsEmpty(s.In(0, 0))) })
 	Default.Install("(set-car! list value)", func(s *State) {
-		_, ok := Head(s.In(0, 'l').Lst(), func(Value) Value { return s.In(1, 0) })
+		_, ok := Head(s.In(0, 'l').Lst(), false, func(Value) Value { return s.In(1, 0) })
 		s.assert(ok || s.panic("set-car!: empty list"))
 	})
 	Default.Install("(set-last! list value)", func(s *State) {
-		_, ok := Last(s.In(0, 'l').Lst(), func(Value) Value { return s.In(1, 0) })
+		_, ok := Head(s.In(0, 'l').Lst(), true, func(Value) Value { return s.In(1, 0) })
 		s.assert(ok || s.panic("set-last!: empty list"))
 	})
 	Default.Install("(number text)", func(s *State) { s.Out = errorOrValue(strconv.ParseFloat(s.In(0, 's').Str(), 64)) })
@@ -227,11 +226,11 @@ func init() {
 	})
 	Default.Install("(atom string)", func(s *State) { s.Out = Atm(s.In(0, 's').Str(), 0, 0) })
 	Default.Install("(list v1 v2 ... vn)", func(s *State) { s.Out = Lst(append([]Value{}, s.Args...)...) })
-	Default.Install("(append list list2)", func(s *State) { s.Out = Lst(_Vddd(s.In(0, 'l').Lst()...), _Vddd(s.In(1, 'l').Lst()...)) })
-	Default.Install("(add list a)", func(s *State) { s.Out = Lst(_Vddd(s.In(0, 'l').Lst()...), s.In(1, 0)) })
-	Default.Install("(cons a list)", func(s *State) { s.Out = Lst(s.In(0, 0), _Vddd(s.In(1, 'l').Lst()...)) })
+	Default.Install("(append list list2)", func(s *State) { s.Out = Lst(_Vddd(s.In(0, 'l').Lst()), _Vddd(s.In(1, 'l').Lst())) })
+	Default.Install("(add list a)", func(s *State) { s.Out = Lst(_Vddd(s.In(0, 'l').Lst()), s.In(1, 0)) })
+	Default.Install("(cons a list)", func(s *State) { s.Out = Lst(s.In(0, 0), _Vddd(s.In(1, 'l').Lst())) })
 	Default.Install("(car list)", func(s *State) {
-		v, ok := Head(s.In(0, 'l').Lst(), nil)
+		v, ok := Head(s.In(0, 'l').Lst(), false, nil)
 		s.assert(ok || s.panic("car: empty list"))
 		s.Out = v
 	})
@@ -241,7 +240,7 @@ func init() {
 		s.Out = Lst(v...)
 	})
 	Default.Install("(last list)", func(s *State) {
-		v, ok := Last(s.In(0, 'l').Lst(), nil)
+		v, ok := Head(s.In(0, 'l').Lst(), true, nil)
 		s.assert(ok || s.panic("last: empty list"))
 		s.Out = v
 	})
@@ -288,6 +287,8 @@ func (ctx *Context) Install(name string, f func(*State)) Value {
 	}
 	if strings.HasPrefix(fn.sig, "(") && strings.HasSuffix(fn.sig, ")") {
 		name = fn.sig[1:strings.IndexAny(fn.sig, " )")]
+	} else {
+		fn.sig = "(" + fn.sig + ")"
 	}
 	ctx.Store(name, Fun(fn))
 	return Fun(fn)
@@ -402,118 +403,115 @@ TAIL_CALL:
 		return Empty
 	}
 
-	*state.callAtom = c._at(0)
-	switch va, _ := c._at(0)._atm(); va {
-	case "if":
-		state.assert(c._len() >= 3 || state.panic("invalid if syntax"))
-		if __exec(c._at(1), state).IsTrue() {
-			expr = c._at(2) // execute true-branch
-			goto TAIL_CALL
-		}
-		for i := 3; i < c._len(); i++ { // execute rest statements: (if cond true-branch false-branch1 ... false-branchn)
-			if i == c._len()-1 {
-				expr = c._at(i)
+	if *state.callAtom = c._at(0); state.callAtom.Type() == 'a' {
+		switch va := state.callAtom.Str(); va {
+		case "if":
+			state.assert(c._len() >= 3 || state.panic("invalid if syntax"))
+			if __exec(c._at(1), state).IsTrue() {
+				expr = c._at(2) // execute true-branch
 				goto TAIL_CALL
 			}
-			__exec(c._at(i), state)
-		}
-		return Void
-	case "lambda", "lambda#":
-		state.assert(c._len() >= 3 || state.panic("invalid lambda syntax"))
-		f := &Func{n: c._at(2), cls: state.local, macro: va == "lambda#"}
-		if c._len() > 3 {
-			f.n = begin(c._at(0), c.Lst()[2:]...)
-		}
-		switch _, va, _, bindings, vtype := c._at(1)._value(); vtype {
-		case 'a':
-			f.nargs, f.varg = []string{va}, true
-		case 'l':
-			for i, n := range bindings {
-				va, ok := n._atm()
-				state.assert(ok || state.panic("invalid parameter %d, expect valid atom", i+1))
-				f.nargs = append(f.nargs, va)
+			for i := 3; i < c._len(); i++ { // execute rest statements: (if cond true-branch false-branch1 ... false-branchn)
+				if i == c._len()-1 {
+					expr = c._at(i)
+					goto TAIL_CALL
+				}
+				__exec(c._at(i), state)
 			}
-		default:
-			panic(fmt.Errorf("invalid binding list: %v", c._at(1)))
+			return Void
+		case "lambda", "lambda#":
+			state.assert(c._len() >= 3 || state.panic("invalid lambda syntax"))
+			f := &Func{n: c._at(2), cls: state.local, macro: va == "lambda#"}
+			if c._len() > 3 {
+				f.n = begin(c._at(0), c.Lst()[2:]...)
+			}
+			switch _, va, _, bindings, vtype := c._at(1)._value(); vtype {
+			case 'a':
+				f.nargs, f.varg = []string{va}, true
+			case 'l':
+				for i, n := range bindings {
+					state.assert(n.Type() == 'a' || state.panic("invalid parameter %d, expect valid atom", i+1))
+					f.nargs = append(f.nargs, n.Str())
+				}
+			default:
+				panic(fmt.Errorf("invalid binding list: %v", c._at(1)))
+			}
+			return Fun(f)
+		case "quote":
+			state.assert(c._len() == 2 || state.panic("invalid quote syntax"))
+			return c._at(1)
+		case "quasiquote":
+			state.assert(c._len() == 2 || state.panic("invalid quasiquote syntax"))
+			state.quasi = true
+			v := __exec(c._at(1), state)
+			state.quasi = false
+			return v
+		case "unquote":
+			panic(fmt.Errorf("unquote outside quasiquote"))
+		case "set!":
+			state.assert(c._len() == 3 && c._at(1).Type() == 'a' || state.panic("invalid set! syntax"))
+			x := c._at(1).Str()
+			_, m := state.local.find(x)
+			state.assert(m != nil || state.panic("set!: unbound %s", x))
+			m.set(x, __exec(c._at(2), state))
+			return Void
+		case "define":
+			state.assert(c._len() == 3 && c._at(1).Type() == 'a' || state.panic("invalid define syntax"))
+			x := c._at(1).Str()
+			_, ok := state.local.m[x]
+			state.assert(!ok || state.panic("re-define %s", x))
+			state.local.set(x, __exec(c._at(2), state))
+			return Void
 		}
-		return Fun(f)
-	case "quote":
-		state.assert(c._len() == 2 || state.panic("invalid quote syntax"))
-		return c._at(1)
-	case "quasiquote":
-		state.assert(c._len() == 2 || state.panic("invalid quasiquote syntax"))
-		state.quasi = true
-		v := __exec(c._at(1), state)
-		state.quasi = false
-		return v
-	case "unquote":
-		panic(fmt.Errorf("unquote outside quasiquote"))
-	case "set!":
-		state.assert(c._len() == 3 && c._at(1).Type() == 'a' || state.panic("invalid set! syntax"))
-		x := c._at(1).Str()
-		_, m := state.local.find(x)
-		state.assert(m != nil || state.panic("set!: unbound %s", x))
-		m.set(x, __exec(c._at(2), state))
-		return Void
-	case "define":
-		state.assert(c._len() == 3 && c._at(1).Type() == 'a' || state.panic("invalid define syntax"))
-		x := c._at(1).Str()
-		_, ok := state.local.m[x]
-		state.assert(!ok || state.panic("re-define %s", x))
-		state.local.set(x, __exec(c._at(2), state))
-		return Void
-	default:
-		fn := __exec(c._at(0), state)
-		state.assert(fn.Type() == 'f' || state.panic("invalid function: %v", c._at(0)))
-		cc := fn.Fun()
+	}
 
-		if cc.f == nil {
-			m := &Context{parent: cc.cls}
-			if !cc.varg {
-				for i, name := range cc.nargs {
-					state.assert(i+1 < c._len() || state.panic("too few arguments, expect at least %d", i+1))
-					m.set(name, __exec(c._at(i+1), state))
-				}
-				if c._len()-1 > len(cc.nargs) {
-					values := make([]Value, 0, c._len())
-					for i := len(cc.nargs) + 1; i < c._len(); i++ {
-						values = append(values, __exec(c._at(i), state))
-					}
-					m.set("\x00", Lst(values...))
-				}
-			} else {
+	fn := __exec(c._at(0), state)
+	state.assert(fn.Type() == 'f' || state.panic("invalid function: %v", c._at(0)))
+	cc := fn.Fun()
+
+	if cc.f == nil {
+		m := &Context{parent: cc.cls}
+		if !cc.varg {
+			for i, name := range cc.nargs {
+				state.assert(i+1 < c._len() || state.panic("too few arguments, expect at least %d", i+1))
+				m.set(name, __exec(c._at(i+1), state))
+			}
+			if c._len()-1 > len(cc.nargs) {
 				values := make([]Value, 0, c._len())
-				for i := 1; i < c._len(); i++ {
+				for i := len(cc.nargs) + 1; i < c._len(); i++ {
 					values = append(values, __exec(c._at(i), state))
 				}
-				m.set(cc.nargs[0], Lst(values...))
 				m.set("\x00", Lst(values...))
 			}
-			*state.callAtom = c._at(0)
-			state.local, expr = m, cc.n
-			goto TAIL_CALL
+		} else {
+			values := make([]Value, 0, c._len())
+			for i := 1; i < c._len(); i++ {
+				values = append(values, __exec(c._at(i), state))
+			}
+			m.set(cc.nargs[0], Lst(values...))
+			m.set("\x00", Lst(values...))
 		}
-
-		s := State{Context: state.local, Out: Void, Caller: c._at(0)}
-		if state.args.list == nil {
-			state.args.list = new([]Value)
-		}
-
-		// tail, _ := Tail(c.Lst())
-		args := state.args
-		for i := 1; i < c._len(); i++ {
-			// _range(0, tail, func(i int, v Value) (Value, bool) {
-			state.args.start = len(*args.list)
-			*args.list = append(*args.list, __exec(c._at(i), state))
-			// 	return v, true
-			// })
-		}
-		s.Args = (*args.list)[args.start:]
 		*state.callAtom = c._at(0)
-		cc.f(&s)
-		*args.list = (*args.list)[:args.start]
-		return s.Out
+		state.local, expr = m, cc.n
+		goto TAIL_CALL
 	}
+
+	s := State{Context: state.local, Out: Void, Caller: c._at(0)}
+	if state.args.list == nil {
+		state.args.list = new([]Value)
+	}
+
+	args := state.args
+	for i := 1; i < c._len(); i++ {
+		state.args.start = len(*args.list)
+		*args.list = append(*args.list, __exec(c._at(i), state))
+	}
+
+	s.Args = (*args.list)[args.start:]
+	*state.callAtom = c._at(0)
+	cc.f(&s)
+	*args.list = (*args.list)[:args.start]
+	return s.Out
 }
 
 func (ctx *Context) Parse(text string) (Value, error) {
@@ -542,15 +540,14 @@ func (ctx *Context) Parse(text string) (Value, error) {
 	}
 	// log.Println(v)
 	return ctx.UnwrapMacro(v)
-	// log.Println(v)
 }
 
 func (ctx *Context) Exec(c Value) (output Value, err error) {
 	var callAtom Value
 	defer func() {
 		if r := recover(); r != nil {
-			if os.Getenv("ONE_STACK") != "" {
-				log.Println(string(debug.Stack()))
+			if os.Getenv("SBD_STACK") != "" {
+				fmt.Println(string(debug.Stack()))
 			}
 			err = fmt.Errorf("%v at %v", r, callAtom)
 		}
@@ -656,7 +653,7 @@ func (ctx *Context) unwrapMacro(v Value) Value {
 
 	unwrapRest := func(v []Value) Value {
 		for comp := v; ; comp, _ = Tail(comp) {
-			if _, ok := Head(comp, ctx.unwrapMacro); !ok {
+			if _, ok := Head(comp, false, ctx.unwrapMacro); !ok {
 				break
 			}
 		}
@@ -664,7 +661,7 @@ func (ctx *Context) unwrapMacro(v Value) Value {
 	}
 
 	comp := v.Lst()
-	head, _ := Head(comp, nil)
+	head, _ := Head(comp, false, nil)
 	if head.Type() != 'a' {
 		return unwrapRest(comp)
 	}
@@ -672,14 +669,14 @@ func (ctx *Context) unwrapMacro(v Value) Value {
 	va := head.Str()
 	if va == "define" || va == "define#" {
 		comp, _ := Tail(comp)                     // skip 'define*'
-		x, ok := Head(comp, nil)                  // get identifier
+		x, ok := Head(comp, false, nil)           // get identifier
 		if ok && x.Type() == 'l' && !IsEmpty(x) { // (define (func paramlist) body...)
 			x := x._flatten(true) // flattern
 			comp, _ = Tail(comp)  // skip identifier
 			comp = unwrapRest(comp).Lst()
 			return Lst(head.Rename("define"), x[0],
 				Lst(append([]Value{head.Rename(ifstr(va == "define#", "lambda#", "lambda")),
-					Lst(x[1:]...)}, _Vddd(comp...))...))
+					Lst(x[1:]...)}, _Vddd(comp))...))
 		}
 	}
 
@@ -691,7 +688,7 @@ func (ctx *Context) unwrapMacro(v Value) Value {
 	args := []Value{_Vquote(m)}
 
 	comp, _ = Tail(comp) // skip macro itself
-	for v, ok := Head(comp, nil); ok; v, ok = Head(comp, nil) {
+	for v, ok := Head(comp, false, nil); ok; v, ok = Head(comp, false, nil) {
 		args = append(args, _Vquote(ctx.unwrapMacro(v).Flatten(true)))
 		comp, _ = Tail(comp)
 	}
@@ -744,47 +741,22 @@ func errorOrValue(v interface{}, err error) Value {
 	return Val(v)
 }
 
-func Head(v []Value, setter func(Value) Value) (Value, bool) {
-	for i := range v {
+func Head(v []Value, rev bool, setter func(Value) Value) (Value, bool) {
+	start, end, step := 0, len(v), 1
+	if rev {
+		start, end, step = len(v)-1, 1, -1
+	}
+	for i := start; i*step < end; i += step {
 		if v[i].Type() != 'd' {
 			if setter != nil {
 				v[i] = setter(v[i])
 			}
 			return v[i], true
-		} else if h, ok := Head(v[i].Lst(), setter); ok {
+		} else if h, ok := Head(v[i].Lst(), rev, setter); ok {
 			return h, true
 		}
 	}
 	return Void, false
-}
-
-func Last(v []Value, setter func(Value) Value) (Value, bool) {
-	for i := len(v) - 1; i >= 0; i-- {
-		if v[i].Type() != 'd' {
-			if setter != nil {
-				v[i] = setter(v[i])
-			}
-			return v[i], true
-		} else if h, ok := Last(v[i].Lst(), setter); ok {
-			return h, true
-		}
-	}
-	return Void, false
-}
-
-func _range(idx int, v []Value, fn func(int, Value) (Value, bool)) (newidx int, cont bool) {
-	for i, el := range v {
-		if el.Type() != 'd' {
-			v[i], cont = fn(idx, el)
-			idx++
-		} else {
-			idx, cont = _range(idx, el.Lst(), fn)
-		}
-		if !cont {
-			return idx, false
-		}
-	}
-	return idx, true
 }
 
 func Tail(v []Value) ([]Value, bool) {
@@ -798,7 +770,7 @@ func Tail(v []Value) ([]Value, bool) {
 		} else if !ok {
 			return Tail(v[1:])
 		} else if len(t) > 0 {
-			return []Value{_Vddd(t...), _Vddd(v[1:]...)}, true
+			return []Value{_Vddd(t), _Vddd(v[1:])}, true
 		}
 	}
 	return v[1:], true
@@ -815,7 +787,7 @@ func Init(v []Value) ([]Value, bool) {
 		} else if !ok {
 			return Init(v[:len(v)-1])
 		} else if len(t) > 0 {
-			return []Value{_Vddd(v[:len(v)-1]...), _Vddd(t...)}, true
+			return []Value{_Vddd(v[:len(v)-1]), _Vddd(t)}, true
 		}
 	}
 	return v[:len(v)-1], true
@@ -834,7 +806,7 @@ func Length(v []Value) (l int) {
 
 func IsEmpty(v Value) bool {
 	if v.Type() == 'l' {
-		_, ok := Head(v.Lst(), nil)
+		_, ok := Head(v.Lst(), false, nil)
 		return !ok
 	}
 	return false
@@ -932,7 +904,7 @@ func Lst(l ...Value) Value {
 func Str(v string) (vs Value) { return Value{flag: -'s', ptr: unsafe.Pointer(&v)} }
 func Fun(f *Func) Value       { return Value{flag: -'f', ptr: unsafe.Pointer(f)} }
 func Num(v float64) Value     { return Value{flag: -'n', val: v} }
-func _Vddd(l ...Value) Value  { return Value{flag: -'d', ptr: unsafe.Pointer(&l)} } // internal use
+func _Vddd(l []Value) Value   { v := Lst(l...); v.flag = -'d'; return v }           // internal use
 func _Vquote(v Value) Value   { return Value{flag: -'q', ptr: unsafe.Pointer(&v)} } // internal use
 
 //go:nosplit
@@ -1108,16 +1080,10 @@ func (v Value) _flatten(inplaceIfPossible bool) []Value {
 		case 'd':
 			r = append(r, e._flatten(inplaceIfPossible)...)
 		case 'l':
-			r = append(r, Lst(e._flatten(inplaceIfPossible)...))
+			r = append(r, e.Flatten(inplaceIfPossible))
 		default:
 			r = append(r, e)
 		}
 	}
 	return r
-}
-func (v Value) _atm() (string, bool) {
-	if v.Type() == 'a' {
-		return v.Str(), true
-	}
-	return "", false
 }

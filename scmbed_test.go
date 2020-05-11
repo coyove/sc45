@@ -30,7 +30,7 @@ func TestOne(t *testing.T) {
 			panic(fmt.Errorf("assertion failed"))
 		}
 	})
-	it.Install("(var/test)", func(s *State) {
+	it.Install("var/test", func(s *State) {
 		v := s.In(0, 'n').Num()
 		a := s.Args[1:]
 		if v == 100 {
@@ -316,19 +316,19 @@ ALL:
 		}
 		for rand.Float64() < 0.5 {
 			if rand.Intn(2) == 1 {
-				list = append(list, _Vddd())
+				list = append(list, _Vddd(nil))
 			} else {
-				list = append(list, _Vddd(_Vddd(), _Vddd()))
+				list = append(list, _Vddd([]Value{_Vddd(nil), _Vddd(nil)}))
 			}
 		}
 		for rand.Float64() < 0.33 {
-			list = append(list, _Vddd(Num(float64(i))))
+			list = append(list, _Vddd([]Value{Num(float64(i))}))
 			if i++; i == count {
 				break ALL
 			}
 		}
 		for rand.Float64() < 0.2 {
-			list = append(list, _Vddd(_Vddd(Num(float64(i)))))
+			list = append(list, _Vddd([]Value{_Vddd([]Value{Num(float64(i))})}))
 			if i++; i == count {
 				break ALL
 			}
@@ -343,7 +343,7 @@ ALL:
 	}
 
 	i := 0.0
-	for h, ok := Head(list, nil); ok; h, ok = Head(list, nil) {
+	for h, ok := Head(list, false, nil); ok; h, ok = Head(list, false, nil) {
 		if n := h.Num(); n != i {
 			t.Fatal("head:", h, i, list)
 		}
@@ -353,7 +353,7 @@ ALL:
 
 	list = list2
 	i = float64(count) - 1
-	for h, ok := Last(list, nil); ok; h, ok = Last(list, nil) {
+	for h, ok := Head(list, true, nil); ok; h, ok = Head(list, true, nil) {
 		if n := h.Num(); n != i {
 			t.Fatal("last:", h, i, list)
 		}

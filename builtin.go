@@ -109,7 +109,7 @@ func init() {
 			innerbinds[i] = Lst(tmpvar, b[1])
 			outerbinds[i] = Lst(b[0], Void)
 		}
-		inner := Lst(let, Lst(innerbinds...), _Vddd(innersets...), _Vddd(s.Args[1:]...))._flatten(true)
+		inner := Lst(let, Lst(innerbinds...), _Vddd(innersets), _Vddd(s.Args[1:]))._flatten(true)
 		outer := []Value{let, Lst(outerbinds...), Lst(inner...)}
 		s.Out = Lst(outer...)
 	})
@@ -190,9 +190,9 @@ func init() {
 		*/
 		for i := range pl {
 			var name, val Value
-			if a, ok := pl[i]._atm(); ok {
+			if pl[i].Type() == 'a' {
 				name, val = pl[i], Empty
-				if strings.HasSuffix(a, "...") {
+				if a := pl[i].Str(); strings.HasSuffix(a, "...") {
 					// Special case: "name..." to catch the rest arguments
 					body = append(body, Lst(
 						s.Caller.Rename("define"),
@@ -294,7 +294,7 @@ func init() {
 	})
 	Default.Install("(map fn list)", func(s *State) {
 		l, r, fn, i := s.In(1, 'l').Lst(), []Value{}, s.In(0, 'f'), 0
-		for h, ok := Head(l, nil); ok; h, ok = Head(l, nil) {
+		for h, ok := Head(l, false, nil); ok; h, ok = Head(l, false, nil) {
 			v, err := fn.Fun().Call(h)
 			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
 			r = append(r, v)
@@ -306,7 +306,7 @@ func init() {
 	Default.Install("(reduce fn v list)", func(s *State) {
 		l, left, fn, i := s.In(2, 'l').Lst(), s.In(1, 0), s.In(0, 'f'), 0
 		var err error
-		for h, ok := Head(l, nil); ok; h, ok = Head(l, nil) {
+		for h, ok := Head(l, false, nil); ok; h, ok = Head(l, false, nil) {
 			left, err = fn.Fun().Call(left, h)
 			s.assert(err == nil || s.panic("reduce: error at element #%d: %v", i, err))
 			l, _ = Tail(l)
@@ -317,7 +317,7 @@ func init() {
 	Default.Install("(reduce-right fn v list)", func(s *State) {
 		i, rl, right, fn := 0, s.In(2, 'l').Lst(), s.In(1, 0), s.In(0, 'f')
 		var err error
-		for l, ok := Last(rl, nil); ok; l, ok = Last(rl, nil) {
+		for l, ok := Head(rl, true, nil); ok; l, ok = Head(rl, true, nil) {
 			right, err = fn.Fun().Call(right, l)
 			s.assert(err == nil || s.panic("reduce-right: error at element #%d: %v", i, err))
 			rl, _ = Init(rl)
@@ -333,7 +333,7 @@ func init() {
 		build := func(expr Value) []Value {
 			s.assert(expr.Type() == 'l' && expr._len() == 2 || s.panic("invalid cond statement: %v", expr))
 			cond, stat := expr.Lst()[0], expr.Lst()[1]
-			if a, ok := cond._atm(); ok && a == "else" {
+			if cond.Type() == 'a' && cond.Str() == "else" {
 				cond = s.Caller.Rename("true")
 			}
 			return []Value{s.Caller.Rename("if"), cond, stat, Void}
@@ -577,4 +577,21 @@ func maxdepth(v []Value) int {
 		}
 	}
 	return d
+}
+
+func Range(v []Value, fn func(int, Value) (Value, bool)) { _range(0, v, fn) }
+
+func _range(idx int, v []Value, fn func(int, Value) (Value, bool)) (newidx int, cont bool) {
+	for i, el := range v {
+		if el.Type() != 'd' {
+			v[i], cont = fn(idx, el)
+			idx++
+		} else {
+			idx, cont = _range(idx, el.Lst(), fn)
+		}
+		if !cont {
+			return idx, false
+		}
+	}
+	return idx, true
 }
