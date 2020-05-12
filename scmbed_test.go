@@ -25,12 +25,12 @@ func (d *dummy) M(v string, args ...string) string {
 
 func TestOne(t *testing.T) {
 	it := New()
-	it.Install("(assert)", func(s *State) {
+	it.Install("assert", 1, func(s *State) {
 		if !s.In(0, 0).IsTrue() {
 			panic(fmt.Errorf("assertion failed"))
 		}
 	})
-	it.Install("var/test", func(s *State) {
+	it.Install("var/test", 1|Vararg, func(s *State) {
 		v := s.In(0, 'n').Num()
 		a := s.Args[1:]
 		if v == 100 {
@@ -42,7 +42,7 @@ func TestOne(t *testing.T) {
 		}
 	})
 	// it.Install("callee", "", func(v int64) int64 { return v * 10 })
-	it.Install("(test/struct-gen)", func(s *State) {
+	it.Install("test/struct-gen", 1, func(s *State) {
 		if !s.In(0, 0).IsTrue() {
 			s.Out = Val((*dummy)(nil))
 			return
@@ -52,10 +52,10 @@ func TestOne(t *testing.T) {
 		s.Out = Val(d)
 		return
 	})
-	it.InstallGo("(make/vararg)", func(v ...interface{}) []interface{} {
+	it.InstallGo("make/vararg", func(v ...interface{}) []interface{} {
 		return v
 	})
-	it.Install("(make/bytes)", func(s *State) {
+	it.Install("make/bytes", 1, func(s *State) {
 		n := s.In(0, 0).Val()
 		l := make([]byte, n.(int64))
 		for i := 0; i < len(l); i++ {
@@ -63,14 +63,14 @@ func TestOne(t *testing.T) {
 		}
 		s.Out = Val(l)
 	})
-	it.Install("(make/list)", func(s *State) {
+	it.Install("make/list", 1, func(s *State) {
 		l := make([]Value, int(s.In(0, 'n').Num()))
 		for i := 0; i < len(l); i++ {
 			l[i] = Num(float64(i) + 1)
 		}
 		s.Out = Lst(l...)
 	})
-	it.Install("(range)", func(s *State) {
+	it.Install("range", 2, func(s *State) {
 		m := s.InMap(0)
 		f := s.In(1, 'f')
 		for k, v := range m {
@@ -89,12 +89,12 @@ func TestOne(t *testing.T) {
 		}
 		log.Println(v, "===>", r)
 	}
-	it.Install("#(iff)", func(s *State) {
+	it.Install("#iff", 2, func(s *State) {
 		s.Out = s.In(1, 0)
 	})
 	assert("(eval (unwrap-macro (list 'define `(madd2 a ,(string->symbol \"b\")) (list 'let `[(c ,(cons '+ (cons 'a (cons 'b [] ))) )] '(* (let ((a a)) a) b c))")
-	assert(`(define# (let*-native bindings)
-		(define body (append '(if () ()) (rest-args)))
+	assert(`(define# (let*-native bindings . body)
+		(define body (append '(if () ()) body))
 		(letrec ((work (lambda (lst)
 			(if (not (null? lst)) (begin
 				(set! body (list 'let (list (last lst)) body))
@@ -123,7 +123,7 @@ func TestOne(t *testing.T) {
 	 (let () (define a '(1))
 	 (define #b (add a 3))
 	 (set-car! a 100)
-	 (assert (list-eq? #b '(100 3))
+	 (assert (list-eq? #b '(100 3)))
 	 (assert (list-eq? (go-value-wrap (make/vararg 1 2 "a")) '(1 2 "a")))
 	 (assert (null? (go-value-wrap (make/vararg))))
 	 (assert (list-eq? (make/list 1000) (make/list 1000)`)
@@ -178,16 +178,16 @@ func TestOne(t *testing.T) {
 	 			(list S)
 	 			(begin
 	 				(define results (list (vector-slice S 0 First-occur) ))
-	 				(set! results (vector-concat results (StringSplit (vector-slice S (+ First-occur (vector-len Sep))) Sep)))
+	 				(set! results (vector-concat results (StringSplit (vector-slice S (+ First-occur (vector-len Sep)) (vector-len S) ) Sep)))
 	 				results
 	 			)
 	 		))
 	 	))`)
 	assert(`(assert (= 1 ( [lambda () 1])`)
 	assert(`(assert (= 1 ( [lambda (a) a] 1)`)
-	assert(`(assert (= 3 ( [lambda (a) (+ a (length (rest-args))) ] 1 2 3)`)
-	assert(`(assert (= 0 ( [lambda (a) (length (rest-args))] 1)`)
-	assert(`(= (json (StringSplit "aabbccbbd" "bb") 'c) "[\"aa\",\"cc\",\"d\"]"`)
+	assert(`(assert (= 3 ( [lambda (a . r) (+ a (length r)) ] 1 2 3)`)
+	assert(`(assert (= 0 ( [lambda (a & r) (length r)] 1)`)
+	assert(`(= (json (StringSplit "aabbccbbd" "bb") ) "[\"aa\",\"cc\",\"d\"]"`)
 	assert(`(let ((a (json-parse "{\"a\":{\"b\":1}}"))) (assert (= (map-get (map-get a "a") "b") 1 `)
 	assert(`(assert (= 3 ((lambda (a b) (+ a b)) 1 2)`)
 	assert(`
@@ -207,20 +207,20 @@ func TestOne(t *testing.T) {
 	 		(set! setter (add setter fun ))
 	 		setter
 	 	`)
-	assert(`(defun a (a) (* a (length (rest-args)))) (defun b(a) (* a (length (rest-args)))) (assert (= 10 (a 5 "a" ())))
+	assert(`(defun a (a # r) (* a (length r))) (defun b(a # r) (* a (length r))) (assert (= 10 (a 5 "a" ())))
 	(assert (= 1 (b 1 1
 	`)
 	assert(`(eval (unwrap-macro (list 'defun 'madd '(a b) '(+ a b`)
 	assert(`(assert (= (madd "a" "b") "ab"))`)
 	assert(`(define #or (lambda# args
 	 		(begin
-	 			(define Build-Macro-Or (lambda (lhs)
+	 			(define Build-Macro-Or (lambda (lhs . rhs)
 	 			(begin
 	 				(define if-stat (append '(if) (list 'cond 'true 'cond2)))
 	 				(set-nth! if-stat 1 lhs)
-	 				(set-nth! if-stat 3 (if (= (length (rest-args)) 1)
-	 					(car (rest-args))
-	 					(apply Build-Macro-Or (rest-args))
+	 				(set-nth! if-stat 3 (if (= (length rhs) 1)
+	 					(car rhs)
+	 					(apply Build-Macro-Or rhs)
 	 				))
 	 				if-stat
 	 			)))
@@ -233,11 +233,11 @@ func TestOne(t *testing.T) {
 	assert(`(assert (not (and true (or) (assert false))`)
 	assert("(stringify '(+ \"asd\" 2))")
 
-	assert(`(assert (list-eq? '(2 3) ((lambda (a) (rest-args)) 1 2 3`)
+	assert(`(assert (list-eq? '(2 3) ((lambda (a . r) r) 1 2 3`)
 	assert(`(define s (test/struct-gen true)) (struct-set! 'V 'V2 false s) (assert (not (struct-get 'V 'V2 s`)
 	assert(`(set! s (test/struct-gen true)) (setf! s.V.V2 false) (assert (not (getf s.V.V2`)
 	assert(`(assert (= ((if true + -) (- (* 2)) 1) (string->number "-1"))`)
-	assert(`(assert (= (car (var/test 1 2 3) 0) 3)`)
+	assert(`(assert (= (car (var/test 1 2 3)) 3)`)
 	assert(`(assert (error? (var/test 100 2 3)`)
 	assert(`(assert (= true (< 1 2`)
 	assert(`(assert (if true true false`)

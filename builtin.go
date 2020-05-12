@@ -48,7 +48,11 @@ func (ctx *Context) InstallGo(name string, fn interface{}) {
 	ctx.assert(rf.Kind() == reflect.Func || ctx.panic("not func"))
 	ctx.assert(rt.NumOut() <= 2 || ctx.panic("too many return values, expect 0, 1 or 2"))
 	ctx.assert(rt.NumOut() < 2 || (rt.Out(1).Implements(reflect.TypeOf((*error)(nil)).Elem())) || ctx.panic("require func (...) (*, error)"))
-	ctx.Install(name, func(s *State) {
+	count := rt.NumIn()
+	if rt.IsVariadic() {
+		count = Vararg | (count - 1)
+	}
+	ctx.Install(name, count, func(s *State) {
 		ins := make([]reflect.Value, 0, rt.NumIn())
 		if rt.IsVariadic() {
 			for i := 0; i < rt.NumIn()-1; i++ {
@@ -87,7 +91,7 @@ func (ctx *Context) Funcs() map[string]*Func {
 }
 
 func init() {
-	Default.Install("#(letrec ((var1 val1) ... (varn valn)) expr...)", func(s *State) {
+	Default.Install("#letrec", 1|Vararg, func(s *State) {
 		/* Unwrap to:
 		(let ((var1 ()) ... (varn ())                  // outer binds
 			(let ((var1_tmp val1) ... (varn_tmp valn)) // inner binds
@@ -113,7 +117,7 @@ func init() {
 		outer := []Value{let, Lst(outerbinds...), Lst(inner...)}
 		s.Out = Lst(outer...)
 	})
-	Default.Install("#(let* ((var1 val1) ... (varn valn)) expr...)", func(s *State) {
+	Default.Install("#let*", 1|Vararg, func(s *State) {
 		/* Unwrap to:
 		(let ((var1 val1)
 			(let ((var2 val2))
@@ -130,7 +134,7 @@ func init() {
 		}
 		s.Out = last
 	})
-	Default.Install("#(i64 @value)", func(s *State) {
+	Default.Install("#i64", 1, func(s *State) {
 		t, unsigned := strings.TrimPrefix(s.In(0, 'y').Str(), "@"), false
 		if strings.HasPrefix(t, "u") {
 			t, unsigned = t[1:], true
@@ -143,34 +147,34 @@ func init() {
 			s.Out = Val(v)
 		}
 	})
-	Default.Install("(list-depth list)", func(s *State) { s.Out = Val(maxdepth(s.In(0, 'l').Lst())) })
-	Default.Install("(go-value-wrap a)", func(s *State) { s.Out = ValRec(s.In(0, 0).Val()) })
-	Default.Install("(map-new key0 value0 key1 value1 ...)", func(s *State) {
+	Default.Install("list-depth", 1, func(s *State) { s.Out = Val(maxdepth(s.In(0, 'l').Lst())) })
+	Default.Install("go-value-wrap", 1, func(s *State) { s.Out = ValRec(s.In(0, 0).Val()) })
+	Default.Install("map-new", Vararg, func(s *State) {
 		m := map[string]Value{}
 		for i := 0; i < len(s.Args); i += 2 {
 			m[s.In(i, 's').Str()] = s.In(i+1, 0)
 		}
 		s.Out = Val(m)
 	})
-	Default.Install("(map-set! map key value)", func(s *State) { s.InMap(0)[s.In(1, 's').Str()] = s.In(2, 0) })
-	Default.Install("(map-delete! map key)", func(s *State) { delete(s.InMap(0), s.In(1, 's').Str()) })
-	Default.Install("(map-get map key)", func(s *State) { s.Out = s.InMap(0)[s.In(1, 's').Str()] })
-	Default.Install("(map-contains map key)", func(s *State) { _, ok := s.InMap(0)[s.In(1, 's').Str()]; s.Out = Bln(ok) })
-	Default.Install("(map-keys map)", func(s *State) {
+	Default.Install("map-set!", 3, func(s *State) { s.InMap(0)[s.In(1, 's').Str()] = s.In(2, 0) })
+	Default.Install("map-delete!", 2, func(s *State) { delete(s.InMap(0), s.In(1, 's').Str()) })
+	Default.Install("map-get", 2, func(s *State) { s.Out = s.InMap(0)[s.In(1, 's').Str()] })
+	Default.Install("map-contains", 2, func(s *State) { _, ok := s.InMap(0)[s.In(1, 's').Str()]; s.Out = Bln(ok) })
+	Default.Install("map-keys", 1, func(s *State) {
 		ret := make([]Value, 0, len(s.InMap(0)))
 		for i := range s.InMap(0) {
 			ret = append(ret, Str(i))
 		}
 		s.Out = Lst(ret...)
 	})
-	Default.Install("(skip n list)", func(s *State) {
+	Default.Install("skip", 2, func(s *State) {
 		l := s.In(1, 'l').Lst()
 		for i := 0; i < int(s.In(0, 'n').Num()); i++ {
 			l, _ = Tail(l)
 		}
 		s.Out = Lst(l...)
 	})
-	Default.Install("#(lambda* (paramlist) body)", func(s *State) {
+	Default.Install("#lambda*", 2, func(s *State) {
 		tmpvar := "a" + strconv.FormatInt(time.Now().Unix(), 10)
 		pl, body := s.In(0, 'l').Lst(), []Value{
 			s.Caller.Make("lambda"),
@@ -219,29 +223,26 @@ func init() {
 		body = append(body, s.Args[1:]...)
 		s.Out = Lst(body...)
 	})
-	Default.Install("(vector-bytes n)", func(s *State) { s.Out = Val(make([]byte, int(s.In(0, 'n').Num()))) })
-	Default.Install("(vector-strings n)", func(s *State) { s.Out = Val(make([]string, int(s.In(0, 'n').Num()))) })
-	Default.Install("(vector-ints n)", func(s *State) { s.Out = Val(make([]int, int(s.In(0, 'n').Num()))) })
-	Default.Install("(vector-int64s n)", func(s *State) { s.Out = Val(make([]int64, int(s.In(0, 'n').Num()))) })
-	Default.Install("(vector-len a)", func(s *State) { s.Out = Num(float64((reflect.ValueOf(s.In(0, 0).Val()).Len()))) })
-	Default.Install("(vector-null? a)", func(s *State) { s.Out = Bln(reflect.ValueOf(s.In(0, 0).Val()).Len() == 0) })
-	Default.Install("(vector-nth vector n)", func(s *State) {
+	Default.Install("vector-bytes", 1, func(s *State) { s.Out = Val(make([]byte, int(s.In(0, 'n').Num()))) })
+	Default.Install("vector-strings", 1, func(s *State) { s.Out = Val(make([]string, int(s.In(0, 'n').Num()))) })
+	Default.Install("vector-ints", 1, func(s *State) { s.Out = Val(make([]int, int(s.In(0, 'n').Num()))) })
+	Default.Install("vector-int64s", 1, func(s *State) { s.Out = Val(make([]int64, int(s.In(0, 'n').Num()))) })
+	Default.Install("vector-len", 1, func(s *State) { s.Out = Num(float64((reflect.ValueOf(s.In(0, 0).Val()).Len()))) })
+	Default.Install("vector-null?", 1, func(s *State) { s.Out = Bln(reflect.ValueOf(s.In(0, 0).Val()).Len() == 0) })
+	Default.Install("vector-nth", 2, func(s *State) {
 		rm := reflect.ValueOf(s.In(0, 0).Val())
 		s.Out = Val(rm.Index(int(s.In(1, 'n').Num())).Interface())
 	})
-	Default.Install("(vector-set-nth! vector n value)", func(s *State) {
+	Default.Install("vector-set-nth!", 3, func(s *State) {
 		rm := reflect.ValueOf(s.In(0, 0).Val())
 		rm.Index(int(s.In(1, 'n').Num())).Set(s.In(2, 0).GoTypedValue(rm.Type().Elem()))
 	})
-	Default.Install("(vector-slice vector start end?)", func(s *State) {
+	Default.Install("vector-slice", 3, func(s *State) {
 		rl := reflect.ValueOf(s.In(0, 0).Val())
-		start, end := int(s.In(1, 'n').Num()), rl.Len()
-		if len(s.Args) == 3 {
-			end = int(s.In(2, 'n').Num())
-		}
+		start, end := int(s.In(1, 'n').Num()), int(s.In(2, 'n').Num())
 		s.Out = Val(rl.Slice(start, end).Interface())
 	})
-	Default.Install("(vector-concat v1 v2)", func(s *State) {
+	Default.Install("vector-concat", 2, func(s *State) {
 		rv1, rv2 := reflect.ValueOf(s.In(0, 0).Val()), reflect.ValueOf(s.In(1, 0).Val())
 		s.assert(rv1.Type() == rv2.Type() || s.panic("vector-concat: different type"))
 		r := reflect.MakeSlice(rv1.Type(), rv1.Len(), rv1.Len()+rv2.Len())
@@ -249,7 +250,7 @@ func init() {
 		reflect.AppendSlice(r, rv2)
 		s.Out = Val(r.Interface())
 	})
-	Default.Install("(vector-foreach vector callback)", func(s *State) {
+	Default.Install("vector-foreach", 2, func(s *State) {
 		rl, fn := reflect.ValueOf(s.In(0, 0).Val()), s.In(1, 'f')
 		for i := 0; i < rl.Len(); i++ {
 			flag, err := fn.Fun().Call(Num(float64(i)), Val(rl.Index(i).Interface()))
@@ -259,30 +260,30 @@ func init() {
 			}
 		}
 	})
-	Default.Install("(define-record 'name 'field1 ... 'fieldn)", func(s *State) {
+	Default.Install("define-record", 1|Vararg, func(s *State) {
 		name, fields, typename := s.In(0, 'y').Str(), make(map[string]int, len(s.Args)-1), new(int)
 		for i := 1; i < len(s.Args); i++ {
 			fields[s.In(i, 'y').Str()] = i
 			func(i int) {
 				name := name + "-" + s.In(i, 'y').Str()
 
-				s.Context.Store(name, Fun(&Func{f: func(ss *State) { // getter
+				s.Context.Install(name, 1, func(ss *State) { // getter
 					ss.assert(len(ss.In(0, 'l').Lst()) == len(s.Args) && ss.In(0, 'l').Lst()[0].Val() == typename || ss.panic("not a %s record", name))
 					ss.Out = ss.In(0, 'l').Lst()[i]
-				}, sig: "(" + name + " r)"}))
+				})
 
-				s.Context.Store(name+"-set!", Fun(&Func{f: func(ss *State) { // setter
+				s.Context.Install(name+"-set!", 2, func(ss *State) { // setter
 					ss.assert(len(ss.In(0, 'l').Lst()) == len(s.Args) && ss.In(0, 'l').Lst()[0].Val() == typename || ss.panic("not a %s record", name))
 					ss.In(0, 'l').Lst()[i] = ss.In(1, 0) // setter
-				}, sig: "(" + name + "-set! r value)"}))
+				})
 			}(i)
 		}
 
-		s.Context.Store(name+"?", Fun(&Func{f: func(ss *State) {
+		s.Context.Install(name+"?", 1, func(ss *State) {
 			ss.Out = Bln(len(ss.In(0, 'l').Lst()) == len(s.Args) && ss.In(0, 'l').Lst()[0].Val() == typename)
-		}, sig: "(" + name + "? a)"}))
+		})
 
-		s.Context.Store(name+"-new", Fun(&Func{f: func(ss *State) {
+		s.Context.Install(name+"-new", Vararg, func(ss *State) {
 			out := make([]Value, len(s.Args))
 			out[0] = Val(typename)
 			for i := 1; i < len(out); i++ {
@@ -294,9 +295,9 @@ func init() {
 				out[fields[fieldname]] = ss.In(i+1, 0)
 			}
 			ss.Out = Lst(out...)
-		}, sig: "(" + name + "-new ...)"}))
+		})
 	})
-	Default.Install("(map fn list)", func(s *State) {
+	Default.Install("map", 2, func(s *State) {
 		l, r, fn, i := s.In(1, 'l').Lst(), []Value{}, s.In(0, 'f'), 0
 		for h, ok := Head(l, false, nil); ok; h, ok = Head(l, false, nil) {
 			v, err := fn.Fun().Call(h)
@@ -307,7 +308,7 @@ func init() {
 		}
 		s.Out = Lst(r...)
 	})
-	Default.Install("(reduce fn v list)", func(s *State) {
+	Default.Install("reduce", 3, func(s *State) {
 		l, left, fn, i := s.In(2, 'l').Lst(), s.In(1, 0), s.In(0, 'f'), 0
 		var err error
 		for h, ok := Head(l, false, nil); ok; h, ok = Head(l, false, nil) {
@@ -318,7 +319,7 @@ func init() {
 		}
 		s.Out = left
 	})
-	Default.Install("(reduce-right fn v list)", func(s *State) {
+	Default.Install("reduce-right", 3, func(s *State) {
 		i, rl, right, fn := 0, s.In(2, 'l').Lst(), s.In(1, 0), s.In(0, 'f')
 		var err error
 		for l, ok := Head(rl, true, nil); ok; l, ok = Head(rl, true, nil) {
@@ -329,7 +330,7 @@ func init() {
 		}
 		s.Out = right
 	})
-	Default.Install("#(cond (cond1 stat1) (cond2 stat2) ... (else catch-all)?)", func(s *State) {
+	Default.Install("#cond", 0, func(s *State) {
 		if len(s.Args) == 0 {
 			s.Out = s.Caller.Make("true")
 			return
@@ -356,7 +357,7 @@ func init() {
 	// 			s.Out = s.Out.(bool) && reflect.DeepEqual(a, s.Args[i])
 	// 		}
 	// 	})
-	Default.Install("(struct-get 'field1 ... 'fieldn struct)", func(s *State) {
+	Default.Install("struct-get", 1|Vararg, func(s *State) {
 		rv := reflect.ValueOf(s.In(len(s.Args)-1, 0).Val())
 		for i := 0; i < len(s.Args)-1; i++ {
 			m := s.In(i, 'y').Str()
@@ -382,7 +383,7 @@ func init() {
 		}
 		s.Out = Val(rv.Interface())
 	})
-	Default.Install("(struct-set! 'field1 ... 'fieldn value struct)", func(s *State) {
+	Default.Install("struct-set!", 1|Vararg, func(s *State) {
 		v := s.In(len(s.Args)-2, 0)
 		f := reflect.ValueOf(s.In(len(s.Args)-1, 0).Val())
 		if f.Kind() == reflect.Ptr {
@@ -398,82 +399,79 @@ func init() {
 			f.Set(v.GoTypedValue(f.Type()))
 		}
 	})
-	Default.Install("(^ string...)", func(s *State) {
+	Default.Install("^", Vararg, func(s *State) {
 		p := bytes.Buffer{}
 		for i := range s.Args {
 			p.WriteString(s.In(i, 's').Str())
 		}
 		s.Out = Str(p.String())
 	})
-	Default.Install("(println any...)", func(s *State) { fmt.Fprintln(DefaultStdout, vlisttointerface(s.Args)...) })
-	Default.Install("(print any...)", func(s *State) { fmt.Fprint(DefaultStdout, vlisttointerface(s.Args)...) })
-	Default.Install("(printf format any...)", func(s *State) { fmt.Fprintf(DefaultStdout, s.In(0, 's').Str(), vlisttointerface(s.Args[1:])...) })
-	Default.Install("(regex/match regexp text)", func(s *State) {
+	Default.Install("println", Vararg, func(s *State) { fmt.Fprintln(DefaultStdout, vlisttointerface(s.Args)...) })
+	Default.Install("print", Vararg, func(s *State) { fmt.Fprint(DefaultStdout, vlisttointerface(s.Args)...) })
+	Default.Install("printf", 1|Vararg, func(s *State) { fmt.Fprintf(DefaultStdout, s.In(0, 's').Str(), vlisttointerface(s.Args[1:])...) })
+	Default.Install("regex/match", 2, func(s *State) {
 		s.Out = Bln(regexp.MustCompile(s.In(0, 's').Str()).MatchString(s.In(1, 's').Str()))
 	})
-	Default.Install("(regex/find regexp text count)", func(s *State) {
+	Default.Install("regex/find", 3, func(s *State) {
 		s.Out = ValRec(regexp.MustCompile(s.In(0, 's').Str()).FindAllStringSubmatch(s.In(1, 's').Str(), int(s.In(2, 'n').Num())))
 	})
-	Default.Install("(json a)", func(s *State) {
+	Default.Install("json", 1, func(s *State) {
 		buf, err := json.MarshalIndent(s.In(0, 0), "", "  ")
 		s.Out = errorOrValue(string(buf), err)
 	})
-	Default.Install("(json-c a)", func(s *State) {
+	Default.Install("json-c", 1, func(s *State) {
 		buf, err := json.Marshal(s.In(0, 0))
 		s.Out = errorOrValue(string(buf), err)
 	})
-	Default.Install("(json-parse string)",
-		func(s *State) {
-			text := strings.TrimSpace(s.In(0, 's').Str())
-			if strings.HasPrefix(text, "{") {
-				m := map[string]interface{}{}
-				if err := json.Unmarshal([]byte(text), &m); err != nil {
-					s.Out = Val(err)
-				} else {
-					s.Out = ValRec(m)
-				}
-			} else if strings.HasPrefix(text, "[") {
-				m := []interface{}{}
-				if err := json.Unmarshal([]byte(text), &m); err != nil {
-					s.Out = Val(err)
-				} else {
-					s.Out = ValRec(m)
-				}
+	Default.Install("json-parse", 1, func(s *State) {
+		text := strings.TrimSpace(s.In(0, 's').Str())
+		if strings.HasPrefix(text, "{") {
+			m := map[string]interface{}{}
+			if err := json.Unmarshal([]byte(text), &m); err != nil {
+				s.Out = Val(err)
 			} else {
-				var m interface{}
-				if err := json.Unmarshal([]byte(text), &m); err != nil {
-					s.Out = Val(err)
-				} else {
-					s.Out = Val(m)
-				}
+				s.Out = ValRec(m)
 			}
-		})
-	Default.Install("#(setf! structname.Field1.Field2...Fieldn value)",
-		func(s *State) {
-			a := s.In(0, 'y').Str()
-			parts := strings.Split(a, ".")
-			s.assert(len(parts) > 1 || s.panic("too few fields to set"))
-			structname := parts[0]
-			setter := []Value{s.In(0, 0).Make("struct-set!")}
-			for i := 1; i < len(parts); i++ {
-				setter = append(setter, _Vquote(s.In(0, 0).Make(parts[i])))
+		} else if strings.HasPrefix(text, "[") {
+			m := []interface{}{}
+			if err := json.Unmarshal([]byte(text), &m); err != nil {
+				s.Out = Val(err)
+			} else {
+				s.Out = ValRec(m)
 			}
-			setter = append(setter, s.In(1, 0), s.In(0, 0).Make(structname))
-			s.Out = Lst(setter...)
-		})
-	Default.Install("#(getf structname.Field1.Field2...Fieldn)",
-		func(s *State) {
-			a := s.In(0, 'y').Str()
-			parts := strings.Split(a, ".")
-			s.assert(len(parts) > 1 || s.panic("too few fields to get"))
-			structname := parts[0]
-			setter := []Value{s.In(0, 0).Make("struct-get")}
-			for i := 1; i < len(parts); i++ {
-				setter = append(setter, _Vquote(s.In(0, 0).Make(parts[i])))
+		} else {
+			var m interface{}
+			if err := json.Unmarshal([]byte(text), &m); err != nil {
+				s.Out = Val(err)
+			} else {
+				s.Out = Val(m)
 			}
-			setter = append(setter, s.In(0, 0).Make(structname))
-			s.Out = Lst(setter...)
-		})
+		}
+	})
+	Default.Install("#setf!", 2, func(s *State) {
+		a := s.In(0, 'y').Str()
+		parts := strings.Split(a, ".")
+		s.assert(len(parts) > 1 || s.panic("too few fields to set"))
+		structname := parts[0]
+		setter := []Value{s.In(0, 0).Make("struct-set!")}
+		for i := 1; i < len(parts); i++ {
+			setter = append(setter, _Vquote(s.In(0, 0).Make(parts[i])))
+		}
+		setter = append(setter, s.In(1, 0), s.In(0, 0).Make(structname))
+		s.Out = Lst(setter...)
+	})
+	Default.Install("#getf", 2, func(s *State) {
+		a := s.In(0, 'y').Str()
+		parts := strings.Split(a, ".")
+		s.assert(len(parts) > 1 || s.panic("too few fields to get"))
+		structname := parts[0]
+		setter := []Value{s.In(0, 0).Make("struct-get")}
+		for i := 1; i < len(parts); i++ {
+			setter = append(setter, _Vquote(s.In(0, 0).Make(parts[i])))
+		}
+		setter = append(setter, s.In(0, 0).Make(structname))
+		s.Out = Lst(setter...)
+	})
 
 	// 	// 	Default.Install("write-file",
 	// 	// 		"write data to file, 'json or 'j if needed",
@@ -494,60 +492,59 @@ func init() {
 	// 	// 		buf, err := ioutil.ReadFile(fn)
 	// 	// 		return string(buf), err
 	// 	// 	})
-	Default.Install("#($ any...)",
-		func(s *State) {
-			v := Lst(s.Args...).String()
-			expr, err := parser.ParseExpr(v)
-			if err != nil {
-				panic(err)
-			}
-			var do func(ast.Expr) Value
-			do = func(e ast.Expr) Value {
-				switch e := e.(type) {
-				case *ast.UnaryExpr:
-					op := e.Op.String()
-					switch e.Op {
-					case token.NOT:
-						op = "not"
-					}
-					return Lst(Sym(op, 0, 0), do(e.X))
-				case *ast.BinaryExpr:
-					op := e.Op.String()
-					switch e.Op {
-					case token.LAND:
-						op = "and"
-					case token.LOR:
-						op = "or"
-					}
-					m := Lst(Sym(op, 0, 0), do(e.X), do(e.Y))
-					return m
-				case *ast.BasicLit:
-					switch e.Kind {
-					case token.INT:
-						v, _ := strconv.ParseInt(e.Value, 10, 64)
-						return Num(float64(v))
-					case token.FLOAT:
-						v, _ := strconv.ParseFloat(e.Value, 64)
-						return Num(v)
-					case token.STRING:
-						v, _ := strconv.Unquote(e.Value)
-						return Str(v)
-					}
-				case *ast.Ident:
-					return Sym(e.Name, 0, 0)
-				case *ast.ParenExpr:
-					return do(e.X)
-				case *ast.CallExpr:
-					r := []Value{do(e.Fun)}
-					for i := range e.Args {
-						r = append(r, do(e.Args[i]))
-					}
-					return Lst(r...)
+	Default.Install("#$", Vararg, func(s *State) {
+		v := Lst(s.Args...).String()
+		expr, err := parser.ParseExpr(v)
+		if err != nil {
+			panic(err)
+		}
+		var do func(ast.Expr) Value
+		do = func(e ast.Expr) Value {
+			switch e := e.(type) {
+			case *ast.UnaryExpr:
+				op := e.Op.String()
+				switch e.Op {
+				case token.NOT:
+					op = "not"
 				}
-				panic(fmt.Errorf("$: %T not supported", e))
+				return Lst(Sym(op, 0, 0), do(e.X))
+			case *ast.BinaryExpr:
+				op := e.Op.String()
+				switch e.Op {
+				case token.LAND:
+					op = "and"
+				case token.LOR:
+					op = "or"
+				}
+				m := Lst(Sym(op, 0, 0), do(e.X), do(e.Y))
+				return m
+			case *ast.BasicLit:
+				switch e.Kind {
+				case token.INT:
+					v, _ := strconv.ParseInt(e.Value, 10, 64)
+					return Num(float64(v))
+				case token.FLOAT:
+					v, _ := strconv.ParseFloat(e.Value, 64)
+					return Num(v)
+				case token.STRING:
+					v, _ := strconv.Unquote(e.Value)
+					return Str(v)
+				}
+			case *ast.Ident:
+				return Sym(e.Name, 0, 0)
+			case *ast.ParenExpr:
+				return do(e.X)
+			case *ast.CallExpr:
+				r := []Value{do(e.Fun)}
+				for i := range e.Args {
+					r = append(r, do(e.Args[i]))
+				}
+				return Lst(r...)
 			}
-			s.Out = do(expr)
-		})
+			panic(fmt.Errorf("$: %T not supported", e))
+		}
+		s.Out = do(expr)
+	})
 }
 
 func (v Value) GoTypedValue(t reflect.Type) reflect.Value {
