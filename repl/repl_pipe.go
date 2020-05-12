@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"strings"
 	"syscall"
 	"unicode"
 
@@ -26,8 +25,7 @@ func RunSimplePipeREPL(it *scmbed.Context, path string) error {
 	touch2() { mkdir -p "$(dirname "$1")" && touch "$1" ; }
 	`)
 
-	for _, k := range it.Funcs() {
-		name := strings.Split(k.String(), " ")[0]
+	for name := range it.Unsafe() {
 		if len(name) == 0 || !unicode.IsLetter(rune(name[0])) {
 			continue
 		}

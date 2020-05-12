@@ -89,12 +89,12 @@ func TestOne(t *testing.T) {
 		}
 		log.Println(v, "===>", r)
 	}
-	it.Install("#iff", 2, func(s *State) {
+	it.Install("iff", 2|Macro, func(s *State) {
 		s.Out = s.In(1, 0)
 	})
 	assert("(eval (unwrap-macro (list 'define `(madd2 a ,(string->symbol \"b\")) (list 'let `[(c ,(cons '+ (cons 'a (cons 'b [] ))) )] '(* (let ((a a)) a) b c))")
 	assert(`(define# (let*-native bindings . body)
-		(define body (append '(if () ()) body))
+		(set! body (append '(if () ()) body))
 		(letrec ((work (lambda (lst)
 			(if (not (null? lst)) (begin
 				(set! body (list 'let (list (last lst)) body))

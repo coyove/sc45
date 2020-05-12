@@ -17,9 +17,9 @@ import (
 )
 
 var (
-	Default     = &Context{}
-	Void, Empty = Value{}, Lst()
-	Vararg      = 1 << 30
+	Default       = &Context{}
+	Vararg, Macro = 1 << 30, 1 << 29
+	Void, Empty   = Value{}, Lst()
 )
 
 type (
@@ -29,13 +29,13 @@ type (
 		val  float64
 	}
 	Func struct {
-		macro bool
-		varg  bool
-		f     func(*State) // builtin functions
+		macro bool         // is macro
+		varg  bool         // is variadic
+		f     func(*State) // builtin function
 		fargs int          // builtin: (minimal) arguments required
-		n     Value        // native functions
+		n     Value        // native function
 		nargs []string     // native: arguments binding list
-		cls   *Context
+		cls   *Context     // native: closure
 	}
 	State struct {
 		*Context
@@ -68,8 +68,8 @@ func init() {
 	Default.Store("false", Bln(false))
 	Default.Store("#t", Bln(true))
 	Default.Store("#f", Bln(false))
-	Default.Install("#begin", Vararg, func(s *State) { s.Out = begin(s.Caller, s.Args...) })
-	Default.Install("#and", Vararg, func(s *State) {
+	Default.Install("begin", Macro|Vararg, func(s *State) { s.Out = begin(s.Caller, s.Args...) })
+	Default.Install("and", Macro|Vararg, func(s *State) {
 		if len(s.Args) == 0 {
 			s.Out = Sym("true", 0, 0)
 			return
@@ -83,7 +83,7 @@ func init() {
 		}
 		s.Out = build(s.Args[0], s.Args[1:])
 	})
-	Default.Install("#or", Vararg, func(s *State) {
+	Default.Install("or", Macro|Vararg, func(s *State) {
 		if len(s.Args) == 0 {
 			s.Out = Sym("false", 0, 0)
 			return
@@ -126,8 +126,8 @@ func init() {
 		}
 		s.Out = Bln(true)
 	})
-	Default.Install("#>", 1|Vararg, func(s *State) { s.Out = Lst(s.Caller.Make("not"), Lst(s.Caller.Make("<="), _Vddd(s.Args))) })
-	Default.Install("#>=", 1|Vararg, func(s *State) { s.Out = Lst(s.Caller.Make("not"), Lst(s.Caller.Make("<"), _Vddd(s.Args))) })
+	Default.Install(">", 1|Vararg|Macro, func(s *State) { s.Out = Lst(s.Caller.Make("not"), Lst(s.Caller.Make("<="), _Vddd(s.Args))) })
+	Default.Install(">=", 1|Vararg|Macro, func(s *State) { s.Out = Lst(s.Caller.Make("not"), Lst(s.Caller.Make("<"), _Vddd(s.Args))) })
 	Default.Install("not", 1, func(s *State) { s.Out = Bln(!s.In(0, 0).IsTrue()) })
 	Default.Install("+", 1|Vararg, func(s *State) {
 		s.Out = s.In(0, 0)
@@ -175,7 +175,7 @@ func init() {
 		}
 		s.Out = Num(a)
 	})
-	Default.Install("#let", 1|Vararg, func(s *State) {
+	Default.Install("let", 1|Vararg|Macro, func(s *State) {
 		names, values := []Value{}, []Value{}
 		for _, pair := range s.In(0, 'l').Lst() {
 			s.assert(pair.Type() == 'l' || s.panic("invalid binding list format: %v", pair))
@@ -257,10 +257,9 @@ func init() {
 	Default.Install("stringify", 1, func(s *State) { s.Out = Str(s.In(0, 0).String()) })
 }
 
-func (ctx *Context) Install(name string, minArgs int, f func(*State)) Value {
-	ctx.assert(len(name) > 0 && minArgs >= 0 || ctx.panic("invalid inputs"))
-	fn := &Func{f: f, fargs: minArgs & (Vararg - 1), varg: minArgs&Vararg != 0, macro: strings.HasPrefix(name, "#")}
-	name = ifstr(fn.macro, name[1:], name)
+func (ctx *Context) Install(name string, minArgsFlag int, f func(*State)) Value {
+	ctx.assert(len(name) > 0 && minArgsFlag >= 0 || ctx.panic("invalid inputs"))
+	fn := &Func{f: f, fargs: minArgsFlag & 0xffff, varg: minArgsFlag&Vararg != 0, macro: minArgsFlag&Macro != 0}
 	ctx.Store(name, Fun(fn))
 	return Fun(fn)
 }
@@ -332,6 +331,8 @@ func (m *Context) Delete(k string) (Value, bool) {
 }
 
 func (m *Context) Len() int { return len(m.m) }
+
+func (m *Context) Unsafe() map[string]Value { return m.m }
 
 func (m *Context) Copy() *Context {
 	m2 := &Context{m: make(map[string]Value, len(m.m)), parent: m.parent}
@@ -472,7 +473,7 @@ TAIL_CALL:
 
 	argscount := c._len() - 1
 	state.assert(argscount == cc.fargs || (cc.varg && argscount >= cc.fargs) ||
-		state.panic("call: expect "+ifstr(cc.varg, "at least", "")+strconv.Itoa(cc.fargs)+" arguments"))
+		state.panic("call: expect "+ifstr(cc.varg, "at least ", "")+strconv.Itoa(cc.fargs)+" arguments"))
 
 	s := State{Context: state.local, Out: Void, Caller: c._at(0)}
 	if state.args.list == nil {
@@ -613,8 +614,7 @@ LOOP:
 	return Lst(comp...), nil
 }
 
-func (ctx *Context) UnwrapMacro(v Value) (Value, error) {
-	var err error
+func (ctx *Context) UnwrapMacro(v Value) (result Value, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("macro unwrap panic: %v", r)
@@ -662,7 +662,7 @@ func (ctx *Context) unwrapMacro(v Value) Value {
 		return unwrapRest(comp)
 	}
 
-	args := []Value{_Vquote(m)}
+	args := []Value{head}
 
 	comp, _ = Tail(comp) // skip macro itself
 	for v, ok := Head(comp, false, nil); ok; v, ok = Head(comp, false, nil) {

@@ -27,26 +27,25 @@ func InjectDebugPProfREPL(it *scmbed.Context, title string) {
 	* {box-sizing: border-box; font-family: monospace;}
 	a {text-decoration: none}
 	.results div:nth-child(even) {background: #eee}
-	.results > div { display: block !important; }
-	.results .result {margin-left:1em;white-space:pre-wrap}
+	.results > div { display: block !important; clear:both }
+	.results .result {margin-left:1em;white-space:pre-wrap;float:right}
 </style>
 <script src="https://cdn.jsdelivr.net/gh/coyove/scmbed/tribute.min.js" ></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tributejs/5.1.2/tribute.min.css" integrity="sha256-jCuf8eDAzmPpRqt5n0v1utTOCeWZc4OrGbv24Pw+ltk=" crossorigin="anonymous" />
 
 <form onsubmit="var _=this;post('',{cmd:this.querySelector('#cmd').value},function(obj, data){
 	var el = _.nextElementSibling.nextElementSibling.cloneNode(true);
-	el.querySelector('.date').innerText = new Date().toLocaleString() 
 	el.querySelector('.options').innerText = data.cmd;
 	el.querySelector('.options').onclick = function() { document.getElementById('cmd').value = data.cmd }
 	el.querySelector('.result').innerText = obj.Result;
 	if (obj.Stdout) el.querySelector('.result').innerHTML += '\n<b>Stdout:</b>\n' + obj.Stdout;
 	_.nextElementSibling.insertBefore(el,_.nextElementSibling.firstChild)
 });return false;">
-<input id=cmd style="width:100%;padding:0.5em;margin:0.5em 0;font-size:16px">
+<input id=cmd style="width:100%;padding:0.5em;margin:0.5em 0;font-size:16px" placeholder="Commands ...">
 <input type=submit style="display:none">
 </form>
 <div class=results></div>
-<div style='display:none'><b class=date></b> <a href='#' class=options></a><span class=result>z</span></div>
+<div style='display:none'> <a href='#' class=options></a><span class=result>z</span></div>
 
 <script>
 (new Tribute({
@@ -76,12 +75,7 @@ function post(url, data, cb) {
 	xml.send(q);
 }
 </script>
-
-<pre>`)
-			for _, cmd := range it.Funcs() {
-				p.WriteByte('\n')
-				p.WriteString(cmd.String())
-			}
+`)
 			w.Header().Add("Content-Type", "text/html")
 			w.Write(p.Bytes())
 			return
@@ -89,8 +83,8 @@ function post(url, data, cb) {
 
 		if r.FormValue("all") != "" {
 			keys := []map[string]string{}
-			for k, cmd := range it.Funcs() {
-				keys = append(keys, map[string]string{"key": k, "doc": cmd.String()})
+			for k := range it.Unsafe() {
+				keys = append(keys, map[string]string{"key": k, "doc": k})
 			}
 			buf, _ := json.Marshal(keys)
 			w.Write(buf)

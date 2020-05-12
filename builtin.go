@@ -80,18 +80,8 @@ func (ctx *Context) InstallGo(name string, fn interface{}) {
 	})
 }
 
-func (ctx *Context) Funcs() map[string]*Func {
-	p := map[string]*Func{}
-	for k, v := range ctx.m {
-		if v.Type() == 'f' {
-			p[k] = v.Fun()
-		}
-	}
-	return p
-}
-
 func init() {
-	Default.Install("#letrec", 1|Vararg, func(s *State) {
+	Default.Install("letrec", 1|Vararg|Macro, func(s *State) {
 		/* Unwrap to:
 		(let ((var1 ()) ... (varn ())                  // outer binds
 			(let ((var1_tmp val1) ... (varn_tmp valn)) // inner binds
@@ -117,7 +107,7 @@ func init() {
 		outer := []Value{let, Lst(outerbinds...), Lst(inner...)}
 		s.Out = Lst(outer...)
 	})
-	Default.Install("#let*", 1|Vararg, func(s *State) {
+	Default.Install("let*", 1|Vararg|Macro, func(s *State) {
 		/* Unwrap to:
 		(let ((var1 val1)
 			(let ((var2 val2))
@@ -134,7 +124,7 @@ func init() {
 		}
 		s.Out = last
 	})
-	Default.Install("#i64", 1, func(s *State) {
+	Default.Install("i64", 1|Macro, func(s *State) {
 		t, unsigned := strings.TrimPrefix(s.In(0, 'y').Str(), "@"), false
 		if strings.HasPrefix(t, "u") {
 			t, unsigned = t[1:], true
@@ -174,7 +164,7 @@ func init() {
 		}
 		s.Out = Lst(l...)
 	})
-	Default.Install("#lambda*", 2, func(s *State) {
+	Default.Install("lambda*", 2|Vararg|Macro, func(s *State) {
 		tmpvar := "a" + strconv.FormatInt(time.Now().Unix(), 10)
 		pl, body := s.In(0, 'l').Lst(), []Value{
 			s.Caller.Make("lambda"),
@@ -330,7 +320,7 @@ func init() {
 		}
 		s.Out = right
 	})
-	Default.Install("#cond", 0, func(s *State) {
+	Default.Install("cond", Macro|Vararg, func(s *State) {
 		if len(s.Args) == 0 {
 			s.Out = s.Caller.Make("true")
 			return
@@ -448,7 +438,7 @@ func init() {
 			}
 		}
 	})
-	Default.Install("#setf!", 2, func(s *State) {
+	Default.Install("setf!", 2|Macro, func(s *State) {
 		a := s.In(0, 'y').Str()
 		parts := strings.Split(a, ".")
 		s.assert(len(parts) > 1 || s.panic("too few fields to set"))
@@ -460,7 +450,7 @@ func init() {
 		setter = append(setter, s.In(1, 0), s.In(0, 0).Make(structname))
 		s.Out = Lst(setter...)
 	})
-	Default.Install("#getf", 2, func(s *State) {
+	Default.Install("getf", 1|Macro, func(s *State) {
 		a := s.In(0, 'y').Str()
 		parts := strings.Split(a, ".")
 		s.assert(len(parts) > 1 || s.panic("too few fields to get"))
@@ -492,7 +482,7 @@ func init() {
 	// 	// 		buf, err := ioutil.ReadFile(fn)
 	// 	// 		return string(buf), err
 	// 	// 	})
-	Default.Install("#$", Vararg, func(s *State) {
+	Default.Install("$", Macro|Vararg, func(s *State) {
 		v := Lst(s.Args...).String()
 		expr, err := parser.ParseExpr(v)
 		if err != nil {
