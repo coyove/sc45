@@ -252,7 +252,11 @@ func init() {
 	Default.Install("(vector-foreach vector callback)", func(s *State) {
 		rl, fn := reflect.ValueOf(s.In(0, 0).Val()), s.In(1, 'f')
 		for i := 0; i < rl.Len(); i++ {
-			fn.Fun().Call(Num(float64(i)), Val(rl.Index(i).Interface()))
+			flag, err := fn.Fun().Call(Num(float64(i)), Val(rl.Index(i).Interface()))
+			s.assert(err == nil || s.panic("invalid callback "))
+			if !flag.IsTrue() {
+				break
+			}
 		}
 	})
 	Default.Install("(define-record 'name 'field1 ... 'fieldn)", func(s *State) {

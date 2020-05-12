@@ -212,7 +212,7 @@ func init() {
 		_, ok := Head(s.In(0, 'l').Lst(), true, func(Value) Value { return s.In(1, 0) })
 		s.assert(ok || s.panic("set-last!: empty list"))
 	})
-	Default.Install("(number text)", func(s *State) { s.Out = errorOrValue(strconv.ParseFloat(s.In(0, 's').Str(), 64)) })
+	Default.Install("(string->number text)", func(s *State) { s.Out = errorOrValue(strconv.ParseFloat(s.In(0, 's').Str(), 64)) })
 	Default.Install("(symbol->string a)", func(s *State) { s.Out = Str(s.In(0, 'y').Str()) })
 	Default.Install("(number->string a)", func(s *State) { s.Out = Str(strconv.FormatFloat(s.In(0, 'n').Num(), 'f', -1, 64)) })
 	Default.Install("(string->symbol string)", func(s *State) { s.Out = Sym(s.In(0, 's').Str(), 0, 0) })

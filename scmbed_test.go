@@ -171,7 +171,9 @@ func TestOne(t *testing.T) {
 	 			(begin
 	 				(define end (+ _2 (vector-len Sep)))
 	 				(if (and (<= end (vector-len S)) (== (vector-slice S _2 end) Sep))
-	 					(begin (set! First-occur _2) false)))))
+	 					(begin (set! First-occur _2) #f)
+						#t
+					))))
 	 		(if (== -1 First-occur)
 	 			(list S)
 	 			(begin
@@ -234,7 +236,7 @@ func TestOne(t *testing.T) {
 	assert(`(assert (list-eq? '(2 3) ((lambda (a) (rest-args)) 1 2 3`)
 	assert(`(define s (test/struct-gen true)) (struct-set! 'V 'V2 false s) (assert (not (struct-get 'V 'V2 s`)
 	assert(`(set! s (test/struct-gen true)) (setf! s.V.V2 false) (assert (not (getf s.V.V2`)
-	assert(`(assert (= ((if true + -) (- (* 2)) 1) (number "-1"))`)
+	assert(`(assert (= ((if true + -) (- (* 2)) 1) (string->number "-1"))`)
 	assert(`(assert (= (car (var/test 1 2 3) 0) 3)`)
 	assert(`(assert (error? (var/test 100 2 3)`)
 	assert(`(assert (= true (< 1 2`)
