@@ -90,14 +90,28 @@ func TestOne(t *testing.T) {
 		s.In()
 		s.Out = s.In()
 	})
+
+	assert(`(define #or (lambda-macro args
+	 	 		(match args ()
+					() '#f
+					(a) a
+					(a b*) ` + "`" + `(if ,a ,a ,(cons '#or b))
+	 	 		)
+	 	 	)`)
+	assert(`
+(assert (not (#or)))
+(assert (= 1 (#or 1)))
+(assert (= 2 (#or #f 2)))
+(assert (#or #f #t (assert false`)
+
 	assert(`(assert (= 3 (match '(letadd a (1 2)) (letadd) (letadd a (v1 v2)) (+ v1 v2))`)
-	assert(`(assert (= 24 (match '(letaddmul a (1 2 3) mul 4) (letaddmul mul)
-		(letadd a (args*) mul s) (* s (reduce (lambda (l r) (+ l r)) 0 args)`)
+	assert(`(assert (= 24 (match '(letaddmul a (1 2 3) mul 4) (letaddmul mul) (letaddmul a (args*) mul s) (* s (reduce + 0 args)`)
+	assert(`(assert (= -24 (match '(letsubmul a (1 2 3 4)) (letsubmul) (letsubmul a (args* mul)) (* mul (reduce - 0 args)`)
 	assert("(assert (and (not (list? (cons 1 2))) (list? '(1 2")
 	assert(`(define Fib (lambda (v) (if (< v 2) v (+ (Fib (- v 1)) (Fib (- v 2)))))) (assert (= 21 (Fib 8) `)
 	// assert(`(Fib 35) `)
 	// 	assert("(eval (unwrap-macro (list 'define `(madd2 a ,(string->symbol \"b\")) (list 'let `[(c ,(cons '+ (cons 'a (cons 'b [] ))) )] '(* (let ((a a)) a) b c))")
-	assert(`(define# (let*-native bindings . body)
+	assert(`(define let*-native (lambda-macro (bindings . body)
 	 		(set! body (cons 'begin body))
 	 		(letrec ((work (lambda (lst)
 	 			(if (not (null? lst)) (begin
@@ -108,8 +122,8 @@ func TestOne(t *testing.T) {
 	 	)`)
 	assert("(let*-native ((a 1) (b (+ a 1)) (c (+ b a))) (assert (= c 3))")
 	// 	assert(`(assert (= (madd2 10 20) 6000)))`)
-	// 	assert("(assert (= #/中 0x4e2d")
-	// 	assert(`(if #f (+ 1 #| inline || comment (assert false) #|#  2 3.5) (lambda (a b) ())`)
+	assert("(assert (= #/中 0x4e2d")
+	assert(`(if #f (+ 1 #| inline || comment (assert false) #|#  2 3.5) (lambda (a b) ())`)
 	// 	assert(`(assert ( [lambda* (a b) (assert (= a 1)) (null? b)] 1) `)
 	// 	assert(`( [lambda* (a [b (+ a 1)] ) (assert (= a 1)) (assert (= b 2))] 1) `)
 	// 	assert(`( [lambda* (a b c...) (assert (= 1 (length c))) (assert (car c))] 1 2 #t) `)
@@ -125,7 +139,7 @@ func TestOne(t *testing.T) {
 	 			(= list1 list2)))
 	
 	 	 (let () (define a '(1))
-	 	 (define #b (append a 3))
+	 	 (define #b (append a '(3) ))
 	 	 (set-car! a 100)
 	 	 (assert (list-eq? #b '(1 3)))
 	 	 (assert (list-eq? (go-value-wrap (make/vararg 1 2 "a")) '(1 2 "a")))
@@ -152,47 +166,47 @@ func TestOne(t *testing.T) {
 	 	 			(if (== false (cb (car s) idx )) ()
 	 	 				(ForeachImpl (cdr s) cb (+ idx 1)))))))] (ForeachImpl s cb 0)) ;;`)
 
-	assert(`(define Counter 0) (Foreach (make/list 1000000) (lambda (v) (begin (set! Counter (+ Counter 1)) (assert (== Counter v`)
-	// 	assert(`
-	// 	 	 // let's play closure
-	// 	 	 (define build-incr (lambda (start)
-	// 	 		(begin
-	// 	 			(let ((incr (lambda (v)
-	// 	 				(set! start (+ start v))
-	// 	 				start))) (assert true) incr)
-	// 	 		)
-	// 	 	 ))
-	// 	 	 (define incr (build-incr 10))
-	// 	 	 (define incr2 (build-incr 1))
-	// 	 	 (assert (== (incr 1) 11))
-	// 	 	 (assert (== (incr2 1) 2))
-	// 	 	 (assert (== (incr -1) 10))
-	// 	 	 (assert (= (incr2 0) 2))
-	// 	 	 	`)
-	// 	assert(`(define StringSplit
-	// 	 	(lambda (S Sep) (begin
-	// 	 		(define First-occur -1)
-	// 	 		(vector-foreach S (lambda (_2 _1)
-	// 	 			(begin
-	// 	 				(define end (+ _2 (vector-len Sep)))
-	// 	 				(if (and (<= end (vector-len S)) (== (vector-slice S _2 end) Sep))
-	// 	 					(begin (set! First-occur _2) #f)
-	// 						#t
-	// 					))))
-	// 	 		(if (== -1 First-occur)
-	// 	 			(list S)
-	// 	 			(begin
-	// 	 				(define results (list (vector-slice S 0 First-occur) ))
-	// 	 				(set! results (vector-concat results (StringSplit (vector-slice S (+ First-occur (vector-len Sep)) (vector-len S) ) Sep)))
-	// 	 				results
-	// 	 			)
-	// 	 		))
-	// 	 	))`)
+	// assert(`(define Counter 0) (Foreach (make/list 1000000) (lambda (v) (begin (set! Counter (+ Counter 1)) (assert (== Counter v`)
+	assert(`
+	 	 	 // let's play closure
+	 	 	 (define build-incr (lambda (start)
+	 	 		(begin
+	 	 			(let ((incr (lambda (v)
+	 	 				(set! start (+ start v))
+	 	 				start))) (assert true) incr)
+	 	 		)
+	 	 	 ))
+	 	 	 (define incr (build-incr 10))
+	 	 	 (define incr2 (build-incr 1))
+	 	 	 (assert (== (incr 1) 11))
+	 	 	 (assert (== (incr2 1) 2))
+	 	 	 (assert (== (incr -1) 10))
+	 	 	 (assert (= (incr2 0) 2))
+	 	 	 	`)
+	assert(`(define StringSplit
+	 	 	(lambda (S Sep) (begin
+	 	 		(define First-occur -1)
+	 	 		(vector-foreach S (lambda (_2 _1)
+	 	 			(begin
+	 	 				(define end (+ _2 (vector-len Sep)))
+	 	 				(if (and (<= end (vector-len S)) (== (vector-slice S _2 end) Sep))
+	 	 					(begin (set! First-occur _2) #f)
+	 						#t
+	 					))))
+	 	 		(if (== -1 First-occur)
+	 	 			(list S)
+	 	 			(begin
+	 	 				(define results (list (vector-slice S 0 First-occur) ))
+	 	 				(set! results (append results (StringSplit (vector-slice S (+ First-occur (vector-len Sep)) (vector-len S) ) Sep)))
+	 	 				results
+	 	 			)
+	 	 		))
+	 	 	))`)
+	assert(`(define flag #f) (assert (match (StringSplit "aabbccbbd" "bb") () ("aa" "cc" "d") (begin (set! flag #t) #t))) (assert flag`)
 	assert(`(assert (= 1 ( [lambda () 1])`)
 	assert(`(assert (= 1 ( [lambda (a) a] 1)`)
 	assert(`(assert (= 3 ( [lambda (a . r) (+ a (length r)) ] 1 2 3)`)
 	assert(`(assert (= 0 ( [lambda (a . r) (length r)] 1)`)
-	// 	assert(`(= (json (StringSplit "aabbccbbd" "bb") ) "[\"aa\",\"cc\",\"d\"]"`)
 	// 	assert(`(let ((a (json-parse "{\"a\":{\"b\":1}}"))) (assert (= (map-get (map-get a "a") "b") 1 `)
 	// 	assert(`(assert (= 3 ((lambda (a b) (+ a b)) 1 2)`)
 	// 	assert(`
@@ -217,22 +231,6 @@ func TestOne(t *testing.T) {
 	// 	`)
 	// 	assert(`(eval (unwrap-macro (list 'defun 'madd '(a b) '(+ a b`)
 	// 	assert(`(assert (= (madd "a" "b") "ab"))`)
-	// 	assert(`(define #or (lambda# args
-	// 	 		(begin
-	// 	 			(define Build-Macro-Or (lambda (lhs . rhs)
-	// 	 			(begin
-	// 	 				(define if-stat (append '(if) (list 'cond 'true 'cond2)))
-	// 	 				(set-nth! if-stat 1 lhs)
-	// 	 				(set-nth! if-stat 3 (if (= (length rhs) 1)
-	// 	 					(car rhs)
-	// 	 					(apply Build-Macro-Or rhs)
-	// 	 				))
-	// 	 				if-stat
-	// 	 			)))
-	// 	 			(apply Build-Macro-Or args)
-	// 	 		)
-	// 	 	)`)
-	// 	assert(`(#or (#or true (assert false)) (= 1 0) true (assert false))`)
 	assert(`(iff (assert false) (+ 1 2) )`)
 	assert(`(assert (or true (assert false`)
 	assert(`(assert (not (and true (or) (assert false))`)

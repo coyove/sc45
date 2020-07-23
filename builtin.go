@@ -2,6 +2,7 @@ package scmbed
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -363,14 +364,14 @@ func init() {
 	// 	Default.Install("regex/find", 3, func(s *State) {
 	// 		s.Out = ValRec(regexp.MustCompile(s.In(0, 's').Str()).FindAllStringSubmatch(s.In(1, 's').Str(), int(s.In(2, 'n').Num())))
 	// 	})
-	// 	Default.Install("json", 1, func(s *State) {
-	// 		buf, err := json.MarshalIndent(s.In(0, 0), "", "  ")
-	// 		s.Out = errorOrValue(string(buf), err)
-	// 	})
-	// 	Default.Install("json-c", 1, func(s *State) {
-	// 		buf, err := json.Marshal(s.In(0, 0))
-	// 		s.Out = errorOrValue(string(buf), err)
-	// 	})
+	Default.Install("json", 1, func(s *State) {
+		buf, err := json.MarshalIndent(s.In().Val(), "", "  ")
+		s.Out = errorOrValue(string(buf), err)
+	})
+	Default.Install("json-c", 1, func(s *State) {
+		buf, err := json.Marshal(s.In().Val())
+		s.Out = errorOrValue(string(buf), err)
+	})
 	// 	Default.Install("json-parse", 1, func(s *State) {
 	// 		text := strings.TrimSpace(s.In(0, 's').Str())
 	// 		if strings.HasPrefix(text, "{") {
