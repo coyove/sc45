@@ -71,7 +71,6 @@ func init() {
 	Default.Store("#t", Bln(true))
 	Default.Store("#f", Bln(false))
 	Default.Install("begin", Macro|Vararg, func(s *State) { s.Out = Lst(s.Args, s.Caller.Make("if"), Lst(Empty), Lst(Empty)) })
-	Default.Install("match!", 2, func(s *State) { s.Out = Bln(s.InType('l').Lst().Match(s.InType('l').Lst(), s.Context.m)) })
 	Default.Install("and", Macro|Vararg, func(s *State) {
 		if s.Args.Empty() {
 			s.Out = Sym("#t", 0, 0)
@@ -256,7 +255,8 @@ func init() {
 	Default.Install("error", 1, func(s *State) { s.Out = Val(errors.New(s.InType('s').Str())) })
 	Default.Install("error?", 1, func(s *State) { _, ok := s.In().Val().(error); s.Out = Bln(ok) })
 	Default.Install("void?", 1, func(s *State) { s.Out = Bln(s.In().IsVoid()) })
-	Default.Install("list?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'l') })
+	Default.Install("list?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'l' && s.LastIn().Lst().Proper()) })
+	Default.Install("pair?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'l') })
 	Default.Install("symbol?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'y') })
 	Default.Install("bool?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'b') })
 	Default.Install("number?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'n') })
@@ -426,14 +426,14 @@ TAIL_CALL:
 			case 'y': // (lambda args body)
 				f.nargs, f.varg = []string{va}, true
 			case 'l': // (lambda (a1 a2 ... an) body)
-				for ; !bindings.Empty(); bindings.MoveNext(&bindings) {
-					state.assert(bindings.Val.Type() == 'y' || state.panic("invalid parameter, expect valid symbol"))
-					f.nargs = append(f.nargs, bindings.Val.Str())
-				}
-				if len(f.nargs) >= 2 { // syntax sugar: (a1 a2 .. an . varg)
-					if sep := f.nargs[len(f.nargs)-2]; len(sep) == 1 && unicode.IsPunct(rune(sep[0])) {
-						f.nargs = append(f.nargs[:len(f.nargs)-2], f.nargs[len(f.nargs)-1])
+				for ; bindings != nil; bindings = bindings.Next {
+					switch bindings.testEmpty() {
+					case 'i':
 						f.varg = true
+						fallthrough
+					case 'f':
+						state.assert(bindings.Val.Type() == 'y' || state.panic("invalid parameter, expect valid symbol"))
+						f.nargs = append(f.nargs, bindings.Val.Str())
 					}
 				}
 			default:
@@ -444,6 +444,31 @@ TAIL_CALL:
 				f.n = Lst(c, state.curCaller.Make("if"), Lst(Empty), Lst(Empty))
 			}
 			return Fun(f)
+		case "match":
+			state.assert(c.MoveNext(&c) || state.panic("invalid match syntax, missing source"))
+			source := __exec(c.Val, state)
+			state.assert(source.Type() == 'l' || state.panic("invalid match syntax, expect source to be list"))
+			state.assert(c.MoveNext(&c) && c.Val.Type() == 'l' || state.panic("invalid match syntax, missing symbol list"))
+			symbols := c.Val.Lst().ToSlice()
+		MATCH_NEXT:
+			state.assert(c.MoveNext(&c) && c.Val.Type() == 'l' || state.panic("invalid match syntax, missing pattern"))
+			pattern := c.Val.Lst()
+			state.assert(c.MoveNext(&c) && c.Val.Type() == 'l' || state.panic("invalid match syntax, missing body"))
+			var symbolmap map[string]struct{}
+			if len(symbols) > 0 {
+				symbolmap = map[string]struct{}{}
+				for _, s := range symbols {
+					symbolmap[s.Str()] = struct{}{}
+				}
+			}
+			m := &Context{parent: state.local, m: map[string]Value{}}
+			if source.Lst().Match(pattern, symbolmap, m.m) {
+				return __exec(c.Val, execState{curCaller: state.curCaller, local: m})
+			}
+			if c.HasNext() {
+				goto MATCH_NEXT
+			}
+			return Void
 		case "quote":
 			state.assert(c.MoveNext(&c) || state.panic("invalid quote syntax"))
 			return c.Val
@@ -618,6 +643,16 @@ LOOP:
 			comp = comp.append(c)
 		case ')', ']':
 			break LOOP
+		case '.':
+			c, err := ctx.scan(s, true)
+			if err != nil {
+				return Void, err
+			}
+			comp.p.Val, comp.p._empty = c, false
+			if s := s.Scan(); s != scanner.EOF && s != ']' && s != ')' {
+				return Void, fmt.Errorf("invalid dot syntax")
+			}
+			return comp.value(), nil
 		case '\'', '`', ',':
 			c, err := ctx.scan(s, true)
 			if err != nil {
@@ -660,9 +695,14 @@ func (ctx *Context) unwrapMacro(v Value) Value {
 
 	unwrapRest := func(v *Pair) Value {
 		old := v
-		for ; !v.Empty(); v.MoveNext(&v) {
+		// fmt.Println(Lst(old))
+		for ; v != nil; v = v.Next {
+			if v.testEmpty() == 't' {
+				break
+			}
 			v.Val = ctx.unwrapMacro(v.Val)
 		}
+		// fmt.Println(Lst(old))
 		return Lst(old)
 	}
 
@@ -958,13 +998,20 @@ func (v Value) _value() (vn float64, vs string, vq Value, vl *Pair, vtype byte) 
 }
 
 func (l *Pair) Empty() bool {
+	if r := l.testEmpty(); r == 'i' {
+		panic("improper list")
+	} else {
+		return r == 't'
+	}
+}
+func (l *Pair) testEmpty() byte {
 	if l.Next == nil {
 		if !l._empty {
-			panic("improper list")
+			return 'i'
 		}
-		return true
+		return 't'
 	}
-	return false
+	return 'f'
 }
 func (l *Pair) HasNext() bool { return l.Next != nil && !l.Next.Empty() }
 func (l *Pair) MoveNext(ll **Pair) bool {
@@ -1010,7 +1057,7 @@ func (b listbuilder) append(v Value) listbuilder {
 }
 func (b listbuilder) value() Value { return Lst(b.L) }
 
-func (source *Pair) Match(pattern *Pair, m map[string]Value) bool {
+func (source *Pair) Match(pattern *Pair, symbols map[string]struct{}, m map[string]Value) bool {
 	if pattern.Empty() && source.Empty() {
 		return true
 	}
@@ -1018,8 +1065,8 @@ func (source *Pair) Match(pattern *Pair, m map[string]Value) bool {
 		return false
 	}
 	isWildcard := func(s string) string {
-		if strings.HasSuffix(s, "*") {
-			return ifstr(len(s) == 1, "*", s[:len(s)-1])
+		if len(s) > 1 && strings.HasSuffix(s, "*") {
+			return s[:len(s)-1]
 		}
 		return ""
 	}
@@ -1036,6 +1083,12 @@ func (source *Pair) Match(pattern *Pair, m map[string]Value) bool {
 	case 'y':
 		sym := pattern.Val.Str()
 		if sym != "_" {
+			if _, ok := symbols[sym]; ok {
+				if !pattern.Val.Equals(source.Val) {
+					return false
+				}
+				break
+			}
 			if w := isWildcard(sym); w != "" {
 				m[w] = Lst(source)
 				return true
@@ -1047,7 +1100,7 @@ func (source *Pair) Match(pattern *Pair, m map[string]Value) bool {
 		if source.Val.Type() != 'l' {
 			return false
 		}
-		if !source.Val.Lst().Match(pattern.Val.Lst(), m) {
+		if !source.Val.Lst().Match(pattern.Val.Lst(), symbols, m) {
 			return false
 		}
 	default:
@@ -1055,7 +1108,7 @@ func (source *Pair) Match(pattern *Pair, m map[string]Value) bool {
 			return false
 		}
 	}
-	return source.Next.Match(pattern.Next, m)
+	return source.Next.Match(pattern.Next, symbols, m)
 }
 func (l *Pair) Take(n int) *Pair {
 	if n == 0 {
@@ -1096,4 +1149,16 @@ func (l *Pair) Last() (last *Pair) {
 		last = l
 	}
 	return
+}
+func (l *Pair) Proper() bool {
+	for {
+		switch l.testEmpty() {
+		case 'i':
+			return false
+		case 't':
+			return true
+		default:
+			l = l.Next
+		}
+	}
 }

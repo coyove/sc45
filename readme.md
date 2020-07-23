@@ -39,7 +39,5 @@ Inside REPL:
 
 # Language details
 - `call/cc` is not supported (due to scmbed's recursive evaluation intepreter, this is also impossible)
-- No difference between proper and improper list, because improper list has NO practical applications in scmbed and `(a . b)` is NOT supported
 - Numbers are all float64, no numerical tower. For `uint64` and `int64`, use `(i64 ...)` to create them
-- Lists are trees in scmbed, thus many operations can be implemented efficiently, e.g.: `(last list)`, in the meantime some operations are not, e.g.: `(set-cdr! list v)`
 - Macro definition syntax: `(lambda# (paramlist) body)`, it is a legit function which takes expressions as inputs and outputs expressions, so it is more like Lisp macro

@@ -52,14 +52,14 @@ func TestOne(t *testing.T) {
 	it.InstallGo("make/vararg", func(v ...interface{}) []interface{} {
 		return v
 	})
-	// 	it.Install("make/bytes", 1, func(s *State) {
-	// 		n := s.In(0, 0).Val()
-	// 		l := make([]byte, n.(int64))
-	// 		for i := 0; i < len(l); i++ {
-	// 			l[i] = byte(i) + 1
-	// 		}
-	// 		s.Out = Val(l)
-	// 	})
+	it.Install("make/bytes", 1, func(s *State) {
+		n := s.In().Val()
+		l := make([]byte, n.(int64))
+		for i := 0; i < len(l); i++ {
+			l[i] = byte(i) + 1
+		}
+		s.Out = Val(l)
+	})
 	it.Install("make/list", 1, func(s *State) {
 		l := make([]Value, int(s.InType('n').Num()))
 		for i := 0; i < len(l); i++ {
@@ -90,8 +90,10 @@ func TestOne(t *testing.T) {
 		s.In()
 		s.Out = s.In()
 	})
-	// assert("(match '(1 2) '(a b)) (assert (and (= a 1) (= b 2)")
-	// return
+	assert(`(assert (= 3 (match '(letadd a (1 2)) (letadd) (letadd a (v1 v2)) (+ v1 v2))`)
+	assert(`(assert (= 24 (match '(letaddmul a (1 2 3) mul 4) (letaddmul mul)
+		(letadd a (args*) mul s) (* s (reduce (lambda (l r) (+ l r)) 0 args)`)
+	assert("(assert (and (not (list? (cons 1 2))) (list? '(1 2")
 	assert(`(define Fib (lambda (v) (if (< v 2) v (+ (Fib (- v 1)) (Fib (- v 2)))))) (assert (= 21 (Fib 8) `)
 	// assert(`(Fib 35) `)
 	// 	assert("(eval (unwrap-macro (list 'define `(madd2 a ,(string->symbol \"b\")) (list 'let `[(c ,(cons '+ (cons 'a (cons 'b [] ))) )] '(* (let ((a a)) a) b c))")
@@ -131,20 +133,20 @@ func TestOne(t *testing.T) {
 	 	 (assert (list-eq? (make/list 1000) (make/list 1000)`)
 	assert("(assert (list-eq? (quasiquote (1 2 3 ,(cons 4 `(5 ,(let ((a 2)) (* a 3) ))))) '(1 2 3 (4 5 6))))")
 	assert("(assert (list-eq? `( 1 ',(+ 2 3)) '(1 '5)))")
-	// 	// assert("(assert (println (list 'defun 'a) '(defun a)")
-	// 	assert(`(let () (define list (make/bytes (i64 @10))) (vector-set-nth! list 0 10) (assert (== 10 (vector-nth list 0)`)
-	// 	// assert(`(let () (define-record-type user (fields name ok))
-	// 	// 	(define a (make-user "" #f)) (user-ok-set! a #t) (assert (user-ok a)) `)
-	// 	assert(`(assert (== 20 (reduce + 0 (map (lambda (a) ($ a * 2)) '(1 2 3 4)`)
-	// 	assert(`(define makecps (lambda (f)
-	// 	 	 	(lambda	args #|
-	// 			multiline
-	// 			comments
-	// 			|#
-	// 			[ (last args) (apply f (init args)) ])
-	// 	 	 ))
-	// 	 	(define +& (makecps +))  (apply +& (cons 1 (cons 2 (cons 3 (cons (lambda (r) (assert (= r 6))) ()`)
-	// 	// assert(`(define a 1) (assert (== a 1)) (define (aa if p2) (set! if (+ if 1)) (+ if p2)) (assert (== 10 (aa 5 4) `)
+	// assert("(assert (println (list 'defun 'a) '(defun a)")
+	assert(`(let () (define list (make/bytes (i64 @10))) (vector-set-nth! list 0 10) (assert (== 10 (vector-nth list 0)`)
+	// assert(`(let () (define-record-type user (fields name ok))
+	// 	(define a (make-user "" #f)) (user-ok-set! a #t) (assert (user-ok a)) `)
+	assert(`(assert (== 20 (reduce + 0 (map (lambda (a) ($ a * 2)) '(1 2 3 4)`)
+	assert(`(define makecps (lambda (f)
+	 	 	 	(lambda	args #|
+	 			multiline
+	 			comments
+	 			|#
+	 			[ (last args) (apply f (init args)) ])
+	 	 	 ))
+	 	 	(define +& (makecps +))  (apply +& (cons 1 (cons 2 (cons 3 (cons (lambda (r) (assert (= r 6))) ()`)
+	// assert(`(define a 1) (assert (== a 1)) (define (aa if p2) (set! if (+ if 1)) (+ if p2)) (assert (== 10 (aa 5 4) `)
 	assert(`(define Foreach (lambda (s cb) (letrec [(ForeachImpl (lambda (s cb idx) ; comment
 	 	 		(if (null? s) () (begin
 	 	 			(if (== false (cb (car s) idx )) ()
@@ -189,7 +191,7 @@ func TestOne(t *testing.T) {
 	assert(`(assert (= 1 ( [lambda () 1])`)
 	assert(`(assert (= 1 ( [lambda (a) a] 1)`)
 	assert(`(assert (= 3 ( [lambda (a . r) (+ a (length r)) ] 1 2 3)`)
-	assert(`(assert (= 0 ( [lambda (a & r) (length r)] 1)`)
+	assert(`(assert (= 0 ( [lambda (a . r) (length r)] 1)`)
 	// 	assert(`(= (json (StringSplit "aabbccbbd" "bb") ) "[\"aa\",\"cc\",\"d\"]"`)
 	// 	assert(`(let ((a (json-parse "{\"a\":{\"b\":1}}"))) (assert (= (map-get (map-get a "a") "b") 1 `)
 	// 	assert(`(assert (= 3 ((lambda (a b) (+ a b)) 1 2)`)

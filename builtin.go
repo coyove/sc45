@@ -2,10 +2,15 @@ package scmbed
 
 import (
 	"bytes"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 var DefaultStdout io.Writer = os.Stdout
@@ -115,20 +120,19 @@ func init() {
 		}
 		s.Out = last
 	})
-	// 	Default.Install("i64", 1|Macro, func(s *State) {
-	// 		t, unsigned := strings.TrimPrefix(s.In(0, 'y').Str(), "@"), false
-	// 		if strings.HasPrefix(t, "u") {
-	// 			t, unsigned = t[1:], true
-	// 		}
-	// 		if unsigned {
-	// 			v, _ := strconv.ParseUint(t, 0, 64)
-	// 			s.Out = Val(v)
-	// 		} else {
-	// 			v, _ := strconv.ParseInt(t, 0, 64)
-	// 			s.Out = Val(v)
-	// 		}
-	// 	})
-	// 	Default.Install("list-depth", 1, func(s *State) { s.Out = Val(maxdepth(s.In(0, 'l').Lst())) })
+	Default.Install("i64", 1|Macro, func(s *State) {
+		t, unsigned := strings.TrimPrefix(s.InType('y').Str(), "@"), false
+		if strings.HasPrefix(t, "u") {
+			t, unsigned = t[1:], true
+		}
+		if unsigned {
+			v, _ := strconv.ParseUint(t, 0, 64)
+			s.Out = Val(v)
+		} else {
+			v, _ := strconv.ParseInt(t, 0, 64)
+			s.Out = Val(v)
+		}
+	})
 	Default.Install("go-value-wrap", 1, func(s *State) { s.Out = ValRec(s.In().Val()) })
 	// 	Default.Install("map-new", Vararg, func(s *State) {
 	// 		m := map[string]Value{}
@@ -204,65 +208,65 @@ func init() {
 	// 		body = append(body, s.Args[1:]...)
 	// 		s.Out = Lst(body...)
 	// 	})
-	// 	Default.Install("vector-bytes", 1, func(s *State) { s.Out = Val(make([]byte, int(s.In(0, 'n').Num()))) })
-	// 	Default.Install("vector-strings", 1, func(s *State) { s.Out = Val(make([]string, int(s.In(0, 'n').Num()))) })
-	// 	Default.Install("vector-ints", 1, func(s *State) { s.Out = Val(make([]int, int(s.In(0, 'n').Num()))) })
-	// 	Default.Install("vector-int64s", 1, func(s *State) { s.Out = Val(make([]int64, int(s.In(0, 'n').Num()))) })
-	// 	Default.Install("vector-len", 1, func(s *State) { s.Out = Num(float64((reflect.ValueOf(s.In(0, 0).Val()).Len()))) })
-	// 	Default.Install("vector-null?", 1, func(s *State) { s.Out = Bln(reflect.ValueOf(s.In(0, 0).Val()).Len() == 0) })
-	// 	Default.Install("vector-nth", 2, func(s *State) {
-	// 		rm := reflect.ValueOf(s.In(0, 0).Val())
-	// 		s.Out = Val(rm.Index(int(s.In(1, 'n').Num())).Interface())
-	// 	})
-	// 	Default.Install("vector-set-nth!", 3, func(s *State) {
-	// 		rm := reflect.ValueOf(s.In(0, 0).Val())
-	// 		rm.Index(int(s.In(1, 'n').Num())).Set(s.In(2, 0).GoTypedValue(rm.Type().Elem()))
-	// 	})
-	// 	Default.Install("vector-slice", 3, func(s *State) {
-	// 		rl := reflect.ValueOf(s.In(0, 0).Val())
-	// 		start, end := int(s.In(1, 'n').Num()), int(s.In(2, 'n').Num())
-	// 		s.Out = Val(rl.Slice(start, end).Interface())
-	// 	})
-	// 	Default.Install("vector-concat", 2, func(s *State) {
-	// 		rv1, rv2 := reflect.ValueOf(s.In(0, 0).Val()), reflect.ValueOf(s.In(1, 0).Val())
-	// 		s.assert(rv1.Type() == rv2.Type() || s.panic("vector-concat: different type"))
-	// 		r := reflect.MakeSlice(rv1.Type(), rv1.Len(), rv1.Len()+rv2.Len())
-	// 		reflect.Copy(r, rv1)
-	// 		reflect.AppendSlice(r, rv2)
-	// 		s.Out = Val(r.Interface())
-	// 	})
-	// 	Default.Install("vector-foreach", 2, func(s *State) {
-	// 		rl, fn := reflect.ValueOf(s.In(0, 0).Val()), s.In(1, 'f')
-	// 		for i := 0; i < rl.Len(); i++ {
-	// 			flag, err := fn.Fun().Call(Num(float64(i)), Val(rl.Index(i).Interface()))
-	// 			s.assert(err == nil || s.panic("invalid callback "))
-	// 			if !flag.IsTrue() {
-	// 				break
-	// 			}
-	// 		}
-	// 	})
-	// 	Default.Install("map", 2, func(s *State) {
-	// 		l, r, fn, i := s.In(1, 'l').Lst(), []Value{}, s.In(0, 'f'), 0
-	// 		for h, ok := Head(l, false, nil); ok; h, ok = Head(l, false, nil) {
-	// 			v, err := fn.Fun().Call(h)
-	// 			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
-	// 			r = append(r, v)
-	// 			l, _ = Tail(l)
-	// 			i++
-	// 		}
-	// 		s.Out = Lst(r...)
-	// 	})
-	// 	Default.Install("reduce", 3, func(s *State) {
-	// 		l, left, fn, i := s.In(2, 'l').Lst(), s.In(1, 0), s.In(0, 'f'), 0
-	// 		var err error
-	// 		for h, ok := Head(l, false, nil); ok; h, ok = Head(l, false, nil) {
-	// 			left, err = fn.Fun().Call(left, h)
-	// 			s.assert(err == nil || s.panic("reduce: error at element #%d: %v", i, err))
-	// 			l, _ = Tail(l)
-	// 			i++
-	// 		}
-	// 		s.Out = left
-	// 	})
+	Default.Install("vector-bytes", 1, func(s *State) { s.Out = Val(make([]byte, int(s.InType('n').Num()))) })
+	Default.Install("vector-strings", 1, func(s *State) { s.Out = Val(make([]string, int(s.InType('n').Num()))) })
+	Default.Install("vector-ints", 1, func(s *State) { s.Out = Val(make([]int, int(s.InType('n').Num()))) })
+	Default.Install("vector-int64s", 1, func(s *State) { s.Out = Val(make([]int64, int(s.InType('n').Num()))) })
+	Default.Install("vector-len", 1, func(s *State) { s.Out = Num(float64((reflect.ValueOf(s.In().Val()).Len()))) })
+	Default.Install("vector-null?", 1, func(s *State) { s.Out = Bln(reflect.ValueOf(s.In().Val()).Len() == 0) })
+	Default.Install("vector-nth", 2, func(s *State) {
+		rm := reflect.ValueOf(s.In().Val())
+		s.Out = Val(rm.Index(int(s.InType('n').Num())).Interface())
+	})
+	Default.Install("vector-set-nth!", 3, func(s *State) {
+		rm := reflect.ValueOf(s.In().Val())
+		rm.Index(int(s.InType('n').Num())).Set(s.In().GoTypedValue(rm.Type().Elem()))
+	})
+	Default.Install("vector-slice", 3, func(s *State) {
+		rl := reflect.ValueOf(s.In().Val())
+		start, end := int(s.InType('n').Num()), int(s.InType('n').Num())
+		s.Out = Val(rl.Slice(start, end).Interface())
+	})
+	Default.Install("vector-concat", 2, func(s *State) {
+		rv1, rv2 := reflect.ValueOf(s.In().Val()), reflect.ValueOf(s.In().Val())
+		s.assert(rv1.Type() == rv2.Type() || s.panic("vector-concat: different type"))
+		r := reflect.MakeSlice(rv1.Type(), rv1.Len(), rv1.Len()+rv2.Len())
+		reflect.Copy(r, rv1)
+		reflect.AppendSlice(r, rv2)
+		s.Out = Val(r.Interface())
+	})
+	Default.Install("vector-foreach", 2, func(s *State) {
+		rl, fn := reflect.ValueOf(s.In().Val()), s.InType('f')
+		for i := 0; i < rl.Len(); i++ {
+			flag, err := fn.Fun().Call(Num(float64(i)), Val(rl.Index(i).Interface()))
+			s.assert(err == nil || s.panic("invalid callback "))
+			if !flag.IsTrue() {
+				break
+			}
+		}
+	})
+	Default.Install("map", 2, func(s *State) {
+		fn, r, l, i := s.InType('f'), []Value{}, s.InType('l').Lst(), 0
+		l.Range(func(h Value) bool {
+			v, err := fn.Fun().Call(h)
+			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
+			r = append(r, v)
+			i++
+			return true
+		})
+		s.Out = Lst(Empty, r...)
+	})
+	Default.Install("reduce", 3, func(s *State) {
+		fn, left, l, i := s.InType('f'), s.In(), s.InType('l').Lst(), 0
+		var err error
+		l.Range(func(h Value) bool {
+			left, err = fn.Fun().Call(left, h)
+			s.assert(err == nil || s.panic("reduce: error at element #%d: %v", i, err))
+			i++
+			return true
+		})
+		s.Out = left
+	})
 	// 	Default.Install("reduce-right", 3, func(s *State) {
 	// 		i, rl, right, fn := 0, s.In(2, 'l').Lst(), s.In(1, 0), s.In(0, 'f')
 	// 		var err error
@@ -436,59 +440,59 @@ func init() {
 	// 	// 	// 		buf, err := ioutil.ReadFile(fn)
 	// 	// 	// 		return string(buf), err
 	// 	// 	// 	})
-	// 	Default.Install("$", Macro|Vararg, func(s *State) {
-	// 		v := Lst(s.Args...).String()
-	// 		expr, err := parser.ParseExpr(v)
-	// 		if err != nil {
-	// 			panic(err)
-	// 		}
-	// 		var do func(ast.Expr) Value
-	// 		do = func(e ast.Expr) Value {
-	// 			switch e := e.(type) {
-	// 			case *ast.UnaryExpr:
-	// 				op := e.Op.String()
-	// 				switch e.Op {
-	// 				case token.NOT:
-	// 					op = "not"
-	// 				}
-	// 				return Lst(Sym(op, 0, 0), do(e.X))
-	// 			case *ast.BinaryExpr:
-	// 				op := e.Op.String()
-	// 				switch e.Op {
-	// 				case token.LAND:
-	// 					op = "and"
-	// 				case token.LOR:
-	// 					op = "or"
-	// 				}
-	// 				m := Lst(Sym(op, 0, 0), do(e.X), do(e.Y))
-	// 				return m
-	// 			case *ast.BasicLit:
-	// 				switch e.Kind {
-	// 				case token.INT:
-	// 					v, _ := strconv.ParseInt(e.Value, 10, 64)
-	// 					return Num(float64(v))
-	// 				case token.FLOAT:
-	// 					v, _ := strconv.ParseFloat(e.Value, 64)
-	// 					return Num(v)
-	// 				case token.STRING:
-	// 					v, _ := strconv.Unquote(e.Value)
-	// 					return Str(v)
-	// 				}
-	// 			case *ast.Ident:
-	// 				return Sym(e.Name, 0, 0)
-	// 			case *ast.ParenExpr:
-	// 				return do(e.X)
-	// 			case *ast.CallExpr:
-	// 				r := []Value{do(e.Fun)}
-	// 				for i := range e.Args {
-	// 					r = append(r, do(e.Args[i]))
-	// 				}
-	// 				return Lst(r...)
-	// 			}
-	// 			panic(fmt.Errorf("$: %T not supported", e))
-	// 		}
-	// 		s.Out = do(expr)
-	// 	})
+	Default.Install("$", Macro|Vararg, func(s *State) {
+		v := Lst(s.Args).String()
+		expr, err := parser.ParseExpr(v)
+		if err != nil {
+			panic(err)
+		}
+		var do func(ast.Expr) Value
+		do = func(e ast.Expr) Value {
+			switch e := e.(type) {
+			case *ast.UnaryExpr:
+				op := e.Op.String()
+				switch e.Op {
+				case token.NOT:
+					op = "not"
+				}
+				return Lst(Empty, Sym(op, 0, 0), do(e.X))
+			case *ast.BinaryExpr:
+				op := e.Op.String()
+				switch e.Op {
+				case token.LAND:
+					op = "and"
+				case token.LOR:
+					op = "or"
+				}
+				m := Lst(Empty, Sym(op, 0, 0), do(e.X), do(e.Y))
+				return m
+			case *ast.BasicLit:
+				switch e.Kind {
+				case token.INT:
+					v, _ := strconv.ParseInt(e.Value, 10, 64)
+					return Num(float64(v))
+				case token.FLOAT:
+					v, _ := strconv.ParseFloat(e.Value, 64)
+					return Num(v)
+				case token.STRING:
+					v, _ := strconv.Unquote(e.Value)
+					return Str(v)
+				}
+			case *ast.Ident:
+				return Sym(e.Name, 0, 0)
+			case *ast.ParenExpr:
+				return do(e.X)
+			case *ast.CallExpr:
+				r := []Value{do(e.Fun)}
+				for i := range e.Args {
+					r = append(r, do(e.Args[i]))
+				}
+				return Lst(Empty, r...)
+			}
+			panic(fmt.Errorf("$: %T not supported", e))
+		}
+		s.Out = do(expr)
+	})
 	//
 	// 	// SRFI-9
 	// 	type record struct {
