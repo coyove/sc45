@@ -332,16 +332,14 @@ func init() {
 		})
 		rv.Set(reflect.ValueOf(v.Val()))
 	})
-	// 	Default.Install("^", Vararg, func(s *State) {
-	// 		p := bytes.Buffer{}
-	// 		for i := range s.Args {
-	// 			p.WriteString(s.In(i, 's').Str())
-	// 		}
-	// 		s.Out = Str(p.String())
-	// 	})
-	// 	Default.Install("println", Vararg, func(s *State) { fmt.Fprintln(DefaultStdout, vlisttointerface(s.Args)...) })
-	// 	Default.Install("print", Vararg, func(s *State) { fmt.Fprint(DefaultStdout, vlisttointerface(s.Args)...) })
-	// 	Default.Install("printf", 1|Vararg, func(s *State) { fmt.Fprintf(DefaultStdout, s.In(0, 's').Str(), vlisttointerface(s.Args[1:])...) })
+	Default.Install("^", Vararg, func(s *State) {
+		p := bytes.Buffer{}
+		s.Args.Range(func(v Value) bool { p.WriteString(v.Str()); return true })
+		s.Out = Str(p.String())
+	})
+	Default.Install("display", Vararg, func(s *State) { fmt.Fprintln(DefaultStdout, vlisttointerface(s.Args.ToSlice())...) })
+	Default.Install("newline", 0, func(s *State) { fmt.Fprintln(DefaultStdout) })
+	// Default.Install("printf", 1|Vararg, func(s *State) { fmt.Fprintf(DefaultStdout, s.In(0, 's').Str(), vlisttointerface(s.Args[1:])...) })
 	// 	Default.Install("regex/match", 2, func(s *State) {
 	// 		s.Out = Bln(regexp.MustCompile(s.In(0, 's').Str()).MatchString(s.In(1, 's').Str()))
 	// 	})
@@ -350,37 +348,37 @@ func init() {
 	// 	})
 	Default.Install("json", 1, func(s *State) {
 		buf, err := json.MarshalIndent(s.In().Val(), "", "  ")
-		s.Out = errorOrValue(string(buf), err)
+		s.Out = ev2(string(buf), err)
 	})
 	Default.Install("json-c", 1, func(s *State) {
 		buf, err := json.Marshal(s.In().Val())
-		s.Out = errorOrValue(string(buf), err)
+		s.Out = ev2(string(buf), err)
 	})
-	// 	Default.Install("json-parse", 1, func(s *State) {
-	// 		text := strings.TrimSpace(s.In(0, 's').Str())
-	// 		if strings.HasPrefix(text, "{") {
-	// 			m := map[string]interface{}{}
-	// 			if err := json.Unmarshal([]byte(text), &m); err != nil {
-	// 				s.Out = Val(err)
-	// 			} else {
-	// 				s.Out = ValRec(m)
-	// 			}
-	// 		} else if strings.HasPrefix(text, "[") {
-	// 			m := []interface{}{}
-	// 			if err := json.Unmarshal([]byte(text), &m); err != nil {
-	// 				s.Out = Val(err)
-	// 			} else {
-	// 				s.Out = ValRec(m)
-	// 			}
-	// 		} else {
-	// 			var m interface{}
-	// 			if err := json.Unmarshal([]byte(text), &m); err != nil {
-	// 				s.Out = Val(err)
-	// 			} else {
-	// 				s.Out = Val(m)
-	// 			}
-	// 		}
-	// 	})
+	Default.Install("json-parse", 1, func(s *State) {
+		text := strings.TrimSpace(s.InType('s').Str())
+		if strings.HasPrefix(text, "{") {
+			m := map[string]interface{}{}
+			if err := json.Unmarshal([]byte(text), &m); err != nil {
+				s.Out = Val(err)
+			} else {
+				s.Out = Val(m)
+			}
+		} else if strings.HasPrefix(text, "[") {
+			m := []interface{}{}
+			if err := json.Unmarshal([]byte(text), &m); err != nil {
+				s.Out = Val(err)
+			} else {
+				s.Out = Val(m)
+			}
+		} else {
+			var m interface{}
+			if err := json.Unmarshal([]byte(text), &m); err != nil {
+				s.Out = Val(err)
+			} else {
+				s.Out = Val(m)
+			}
+		}
+	})
 	Default.Install("setf!", 2|Macro, func(s *State) {
 		a, v := s.InType('y').Str(), s.In()
 		parts := strings.Split(a, ".")
@@ -644,9 +642,12 @@ func vlisttointerface(l []Value) []interface{} {
 
 func trystr(s *State) string {
 	switch s.In().Type() {
-	case 's', 'y', 'n':
+	case 's', 'y':
 		return s.LastIn().Str()
-	default:
-		return ""
+	case 'n':
+		if s.LastIn().ptr != nil {
+			return s.LastIn().Str()
+		}
 	}
+	return ""
 }

@@ -90,23 +90,24 @@ func TestOne(t *testing.T) {
 		s.In()
 		s.Out = s.In()
 	})
+	assert("(assert (match (append () '(1 2)) () (1 2) #t)")
 	assert(`(define-macro let*-native-match (lambda L
 			(match L ()
 				( (b* (s v)) body ) (quasiquote (let*-native-match ,b (let ((,s ,v)) ,body)))
 				( () body ) body
 		)`)
-	assert(`(define-macro #or (lambda args
+	assert(`(define-macro or# (lambda args
 	 	 		(match args ()
 					() '#f
 					(a) a
-					(a b*) ` + "`" + `(if ,a ,a ,(cons '#or b))
+					(a b*) ` + "`" + `(if ,a ,a ,(cons 'or# b))
 	 	 		)
 	 	 	)`)
 	assert(`
-(assert (not (#or)))
-(assert (= 1 (#or 1)))
-(assert (= 2 (#or #f 2)))
-(assert (#or #f #t (assert false`)
+(assert (not (or#)))
+(assert (= 1 (or# 1)))
+(assert (= 2 (or# #f 2)))
+(assert (or# #f #t (assert false`)
 
 	assert(`(assert (= 3 (match '(letadd a (1 2)) (letadd) (letadd a (v1 v2)) (+ v1 v2))`)
 	assert(`(assert (= 24 (match '(letaddmul a (1 2 3) mul 4) (letaddmul mul) (letaddmul a (args*) mul s) (* s (reduce + 0 args)`)
@@ -146,9 +147,9 @@ func TestOne(t *testing.T) {
 	
 		 (assert (list-eq? '(cons 2 (3 4 5 13)) ` + "`" + `(cons 2 ,(cons 3 ` + "`" + `(4 5 ,(+ 6 7))))))
 	 	 (let () (define a '(1))
-	 	 (define #b (append a '(3) ))
+	 	 (define b# (append a '(3) ))
 	 	 (set-car! a 100)
-	 	 (assert (list-eq? #b '(1 3)))
+	 	 (assert (list-eq? b# '(1 3)))
 	 	 (assert (list-eq? (go->value (make/vararg 1 2 "a")) '(1 2 "a")))
 	 	 (assert (null? (go->value (make/vararg))))
 	 	 (assert (list-eq? (make/list 1000) (make/list 1000)`)

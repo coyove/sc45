@@ -2,7 +2,6 @@ package scmbed
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -66,67 +65,52 @@ type (
 func New() *Context { return Default.Copy() }
 
 func init() {
-	Default.Store("true", Bln(true))
-	Default.Store("false", Bln(false))
-	Default.Store("#t", Bln(true))
-	Default.Store("#f", Bln(false))
-	Default.Install("begin", Macro|Vararg, func(s *State) { s.Out = Lst(s.Args, s.Caller.Make("if"), Void, Void) })
-	Default.Install("and", Macro|Vararg, func(s *State) {
+	Default.Store("true", Bln(true)).Store("false", Bln(false))
+	Default.Install("begin", Macro|Vararg, func(s *State) {
+		s.Out = Lst(s.Args, s.Caller.Make("if"), Void, Void)
+	}).Install("and", Macro|Vararg, func(s *State) {
 		if s.Args.Empty() {
-			s.Out = Sym("#t", 0, 0)
-			return
+			s.Out = Bln(true)
+		} else if !s.Args.HasNext() {
+			s.Out = s.In()
+		} else {
+			s.Out = Lst(Empty, s.Caller.Make("if"), s.In(), Lst(s.Args, s.Caller.Make("and")), Bln(false))
 		}
-		var build func(lhs *Pair) Value
-		build = func(lhs *Pair) Value {
-			if !lhs.HasNext() {
-				return lhs.Val
-			}
-			return Lst(Empty, s.Caller.Make("if"), lhs.Val, build(lhs.Next), Sym("#f", 0, 0))
-		}
-		s.Out = build(s.Args)
-	})
-	Default.Install("or", Macro|Vararg, func(s *State) {
+	}).Install("or", Macro|Vararg, func(s *State) {
 		if s.Args.Empty() {
-			s.Out = Sym("#f", 0, 0)
-			return
+			s.Out = Bln(false)
+		} else if !s.Args.HasNext() {
+			s.Out = s.In()
+		} else {
+			s.Out = Lst(Empty, s.Caller.Make("if"), s.In(), Bln(true), Lst(s.Args, s.Caller.Make("or")))
 		}
-		var build func(lhs *Pair) Value
-		build = func(lhs *Pair) Value {
-			if !lhs.HasNext() {
-				return lhs.Val
-			}
-			return Lst(Empty, s.Caller.Make("if"), lhs.Val, Sym("#t", 0, 0), build(lhs.Next))
-		}
-		s.Out = build(s.Args)
-	})
-	Default.Install("==", 1|Vararg, func(s *State) {
+	}).Install("==", 1|Vararg, func(s *State) {
 		flag := true
 		for s.In(); flag && !s.Args.Empty(); {
 			flag = s.LastIn().Equals(s.In())
 		}
 		s.Out = Bln(flag)
-	})
-	Default.Install("!=", 1|Vararg, func(s *State) { s.Out = Bln(!s.In().Equals(s.In())) })
-	Default.Store("=", Default.m["=="])
-	Default.Store("<>", Default.m["!="])
-	Default.Install("<", 1|Vararg, func(s *State) {
+	}).Store("=", Default.m["=="]).Install("!=", 1|Vararg, func(s *State) {
+		s.Out = Bln(!s.In().Equals(s.In()))
+	}).Store("<>", Default.m["!="]).Install("<", 1|Vararg, func(s *State) {
 		flag := true
 		for s.InType('n'); flag && !s.Args.Empty(); {
 			flag = s.LastIn().Num() < s.InType('n').Num()
 		}
 		s.Out = Bln(flag)
-	})
-	Default.Install("<=", 1|Vararg, func(s *State) {
+	}).Install("<=", 1|Vararg, func(s *State) {
 		flag := true
 		for s.InType('n'); flag && !s.Args.Empty(); {
 			flag = s.LastIn().Num() <= s.InType('n').Num()
 		}
 		s.Out = Bln(flag)
-	})
-	Default.Install(">", 1|Vararg|Macro, func(s *State) { s.Out = Lst(Empty, s.Caller.Make("not"), Lst(s.Args, s.Caller.Make("<="))) })
-	Default.Install(">=", 1|Vararg|Macro, func(s *State) { s.Out = Lst(Empty, s.Caller.Make("not"), Lst(s.Args, s.Caller.Make("<"))) })
-	Default.Install("not", 1, func(s *State) { s.Out = Bln(s.In().IsFalse()) })
-	Default.Install("+", 1|Vararg, func(s *State) {
+	}).Install(">", 1|Vararg|Macro, func(s *State) {
+		s.Out = Lst(Empty, s.Caller.Make("not"), Lst(s.Args, s.Caller.Make("<=")))
+	}).Install(">=", 1|Vararg|Macro, func(s *State) {
+		s.Out = Lst(Empty, s.Caller.Make("not"), Lst(s.Args, s.Caller.Make("<")))
+	}).Install("not", 1, func(s *State) {
+		s.Out = Bln(s.In().IsFalse())
+	}).Install("+", 1|Vararg, func(s *State) {
 		switch s.Out = s.In(); s.Out.Type() {
 		case 'n':
 			vn := s.Out.Num()
@@ -143,8 +127,7 @@ func init() {
 		default:
 			panic(fmt.Errorf("can't apply 'add' on %v", s.Out))
 		}
-	})
-	Default.Install("-", 1|Vararg, func(s *State) {
+	}).Install("-", 1|Vararg, func(s *State) {
 		a := s.InType('n').Num()
 		if s.Args.Empty() {
 			a = -a
@@ -153,22 +136,19 @@ func init() {
 			a -= s.InType('n').Num()
 		}
 		s.Out = Num(a)
-	})
-	Default.Install("*", 1|Vararg, func(s *State) {
+	}).Install("*", 1|Vararg, func(s *State) {
 		a := s.InType('n').Num()
 		for !s.Args.Empty() {
 			a *= s.InType('n').Num()
 		}
 		s.Out = Num(a)
-	})
-	Default.Install("/", 1|Vararg, func(s *State) {
+	}).Install("/", 1|Vararg, func(s *State) {
 		a := s.InType('n').Num()
 		for !s.Args.Empty() {
 			a /= s.InType('n').Num()
 		}
 		s.Out = Num(a)
-	})
-	Default.Install("let", 1|Vararg|Macro, func(s *State) {
+	}).Install("let", 1|Vararg|Macro, func(s *State) {
 		var names, values []Value
 		s.InType('l').Lst().Range(func(pair Value) bool {
 			s.assert(pair.Type() == 'l' || s.panic("invalid binding list format: %v", pair))
@@ -179,28 +159,23 @@ func init() {
 		})
 		fn := Lst(Empty, s.Caller.Make("lambda"), Lst(Empty, names...), Lst(s.Args, s.Caller.Make("if"), Void, Void))
 		s.Out = Lst(Lst(Empty, values...).Lst(), fn)
-	})
-	Default.Install("unwrap-macro", 1, func(s *State) { s.Out = errorOrValue(s.Context.UnwrapMacro(s.In())) })
-	Default.Install("eval", 1, func(s *State) { s.Out = errorOrValue(s.Context.Exec(s.In())) })
-	Default.Install("parse", 1, func(s *State) { s.Out = errorOrValue(s.Context.Parse(s.InType('s').Str())) })
-	Default.Install("null?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'l' && s.LastIn().Lst().Empty()) })
-	Default.Install("set-car!", 2, func(s *State) {
+	}).Install("eval", 1, func(s *State) {
+		s.Out = ev2(s.Context.Exec(s.In()))
+	}).Install("parse", 1, func(s *State) {
+		s.Out = ev2(s.Context.Parse(s.InType('s').Str()))
+	}).Install("set-car!", 2, func(s *State) {
 		l := s.InType('l').Lst()
 		s.assert(!l.Empty() || s.panic("set-car!: empty list"))
 		l.Val = s.In()
-	})
-	Default.Install("set-cdr!", 2, func(s *State) {
+	}).Install("set-cdr!", 2, func(s *State) {
 		l := s.InType('l').Lst()
 		s.assert(!l.Empty() || s.panic("set-cdr!: empty list"))
 		l.Next = s.InType('l').Lst()
-	})
-	Default.Install("string->number", 1, func(s *State) { s.Out = errorOrValue(strconv.ParseFloat(s.InType('s').Str(), 64)) })
-	Default.Install("symbol->string", 1, func(s *State) { s.Out = Str(s.InType('y').Str()) })
-	Default.Install("number->string", 1, func(s *State) { s.Out = Str(strconv.FormatFloat(s.InType('n').Num(), 'f', -1, 64)) })
-	Default.Install("string->symbol", 1, func(s *State) { s.Out = Sym(s.InType('s').Str(), 0, 0) })
-	Default.Install("list", Vararg, func(s *State) { s.Out = Lst(s.Args) })
-	Default.Install("append", 2, func(s *State) { s.Out = Lst(s.InType('l').Lst().Append(s.InType('l').Lst())) })
-	Default.Install("cons", 2, func(s *State) {
+	}).Install("list", Vararg, func(s *State) {
+		s.Out = Lst(s.Args)
+	}).Install("append", 2, func(s *State) {
+		s.Out = Lst(s.InType('l').Lst().Append(s.InType('l').Lst()))
+	}).Install("cons", 2, func(s *State) {
 		p := &Pair{Val: s.In()}
 		if s.In().Type() == 'l' {
 			p.Next = s.LastIn().Lst()
@@ -208,65 +183,63 @@ func init() {
 			p.Next = &Pair{Val: s.LastIn()}
 		}
 		s.Out = Lst(p)
-	})
-	Default.Install("car", 1, func(s *State) {
+	}).Install("car", 1, func(s *State) {
 		l := s.InType('l').Lst()
 		s.assert(!l.Empty() || s.panic("car: empty list"))
 		s.Out = l.Val
-	})
-	Default.Install("cdr", 1, func(s *State) {
+	}).Install("cdr", 1, func(s *State) {
 		l := s.InType('l').Lst()
 		s.assert(!l.Empty() || s.panic("cdr: empty list"))
 		s.Out = Lst(l.Next)
-	})
-	Default.Install("last", 1, func(s *State) {
+	}).Install("last", 1, func(s *State) {
 		l := s.InType('l').Lst()
 		s.assert(!l.Empty() || s.panic("last: empty list"))
 		s.Out = l.Last().Val
-	})
-	Default.Install("init", 1, func(s *State) {
+	}).Install("init", 1, func(s *State) {
 		l := s.InType('l').Lst()
 		s.assert(!l.Empty() || s.panic("init: empty list"))
 		s.Out = Lst(l.Take(-1))
-	})
-	Default.Install("length", 1, func(s *State) { s.Out = Num(float64(s.InType('l').Lst().Len())) })
-	Default.Install("raise", 1, func(s *State) { panic(s.In()) })
-	Default.Install("pcall", 2, func(s *State) {
+	}).Install("length", 1, func(s *State) {
+		s.Out = Num(float64(s.InType('l').Lst().Len()))
+	}).Install("pcall", 2, func(s *State) {
 		rc := s.In()
 		defer func() {
 			if r := recover(); r != nil {
 				if rc.Type() != 'f' {
 					s.Out = Val(r)
 				} else {
-					s.Out = errorOrValue(rc.Fun().Call(Val(r)))
+					s.Out = ev2(rc.Fun().Call(Val(r)))
 				}
 			}
 		}()
 		s.Out = __exec(Lst(Empty, _Qt(s.In())), execState{curCaller: &s.Out, local: s.Context})
-	})
-	Default.Install("apply", 2, func(s *State) {
+	}).Install("apply", 2, func(s *State) {
 		v, err := s.InType('f').Fun().Call(s.InType('l').Lst().ToSlice()...)
 		s.assert(err == nil || s.panic("apply panic: %v", err))
 		s.Out = v
-	})
-	Default.Install("error", 1, func(s *State) { s.Out = Val(errors.New(s.InType('s').Str())) })
-	Default.Install("error?", 1, func(s *State) { _, ok := s.In().Val().(error); s.Out = Bln(ok) })
-	Default.Install("void?", 1, func(s *State) { s.Out = Bln(s.In().IsVoid()) })
-	Default.Install("list?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'l' && s.LastIn().Lst().Proper()) })
-	Default.Install("pair?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'l') })
-	Default.Install("symbol?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'y') })
-	Default.Install("bool?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'b') })
-	Default.Install("number?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'n') })
-	Default.Install("string?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 's') })
-	Default.Install("quote?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'q') })
-	Default.Install("stringify", 1, func(s *State) { s.Out = Str(s.In().String()) })
+	}).
+		Install("raise", 1, func(s *State) { panic(s.In()) }).
+		Install("string->number", 1, func(s *State) { s.Out = ev2(strconv.ParseFloat(s.InType('s').Str(), 64)) }).
+		Install("symbol->string", 1, func(s *State) { s.Out = Str(s.InType('y').Str()) }).
+		Install("number->string", 1, func(s *State) { s.Out = Str(strconv.FormatFloat(s.InType('n').Num(), 'f', -1, 64)) }).
+		Install("string->symbol", 1, func(s *State) { s.Out = Sym(s.InType('s').Str(), 0, 0) }).
+		Install("string->error", 1, func(s *State) { s.Out = Val(fmt.Errorf(s.InType('s').Str())) }).
+		Install("null?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'l' && s.LastIn().Lst().Empty()) }).
+		Install("error?", 1, func(s *State) { _, ok := s.In().Val().(error); s.Out = Bln(ok) }).
+		Install("void?", 1, func(s *State) { s.Out = Bln(s.In().IsVoid()) }).
+		Install("list?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'l' && s.LastIn().Lst().Proper()) }).
+		Install("pair?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'l') }).
+		Install("symbol?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'y') }).
+		Install("bool?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'b') }).
+		Install("number?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 'n') }).
+		Install("string?", 1, func(s *State) { s.Out = Bln(s.In().Type() == 's') }).
+		Install("stringify", 1, func(s *State) { s.Out = Str(s.In().String()) })
 }
 
-func (ctx *Context) Install(name string, minArgsFlag int, f func(*State)) Value {
+func (ctx *Context) Install(name string, minArgsFlag int, f func(*State)) *Context {
 	ctx.assert(len(name) > 0 && minArgsFlag >= 0 || ctx.panic("invalid inputs"))
 	fn := &Func{f: f, fargs: minArgsFlag & 0xffff, varg: minArgsFlag&Vararg != 0, macro: minArgsFlag&Macro != 0}
-	ctx.Store(name, Fun(fn))
-	return Fun(fn)
+	return ctx.Store(name, Fun(fn))
 }
 
 func (f *Func) Call(a ...Value) (Value, error) {
@@ -324,12 +297,13 @@ func (m *Context) set(k string, v Value) {
 	m.m[k] = v
 }
 
-func (m *Context) Store(k string, v Value) {
+func (m *Context) Store(k string, v Value) *Context {
 	if _, mv := m.find(k); mv == nil {
 		m.set(k, v)
 	} else {
 		mv.set(k, v)
 	}
+	return m
 }
 
 func (m *Context) Load(k string) (Value, bool) {
@@ -365,7 +339,6 @@ func __exec(expr Value, state execState) Value {
 				state.assert(lst.HasNext() || state.panic("invalid unquote syntax"))
 				state.quasi = false
 				v := __exec(lst.Next.Val, state)
-				state.quasi = true
 				return v
 			}
 			results := initlistbuilder()
@@ -385,8 +358,7 @@ TAIL_CALL:
 		v, ok := state.local.Load(expr.Str())
 		state.assert(ok || state.panic("unbound %v", expr))
 		return v
-	case 'l':
-		// Try evaluating
+	case 'l': // evaluating the list
 	default:
 		return expr
 	}
@@ -406,9 +378,9 @@ TAIL_CALL:
 				expr = c.Val // execute true-branch
 				goto TAIL_CALL
 			}
-			c.MoveNext(&c)                     // skip if
+			c.MoveNext(&c)                     // skip condition
 			c.MoveNext(&c)                     // skip true branch
-			for ; !c.Empty(); c.MoveNext(&c) { // execute rest statements: (if cond true-branch false-branch1 ... false-branchn)
+			for ; !c.Empty(); c.MoveNext(&c) { // execute rest statements: (if cond true-branch false-1 ... false-n)
 				if !c.HasNext() {
 					expr = c.Val
 					goto TAIL_CALL
@@ -473,7 +445,6 @@ TAIL_CALL:
 			state.assert(c.MoveNext(&c) || state.panic("invalid quasiquote syntax"))
 			state.quasi = true
 			v := __exec(c.Val, state)
-			state.quasi = false
 			return v
 		case "unquote":
 			panic(fmt.Errorf("unquote outside quasiquote"))
@@ -488,9 +459,8 @@ TAIL_CALL:
 		case "define-macro":
 			state.assert(c.MoveNext(&c) && c.Val.Type() == 'y' || state.panic("invalid define-macro syntax, missing symbol"))
 			x := c.Val.Str()
-			_, ok := state.local.m[x]
-			state.assert(!ok || state.panic("re-define %s", x))
-			state.assert(c.MoveNext(&c) || state.panic("invalid define-macro syntax, missing bound value"))
+			state.assert(state.local.m[x].IsVoid() || state.panic("re-define %s", x)).
+				assert(c.MoveNext(&c) || state.panic("invalid define-macro syntax, missing bound value"))
 			f := __exec(c.Val, state)
 			state.assert(f.Type() == 'f' || state.panic("invalid define-macro syntax, expect function"))
 			f.Fun().macro = true
@@ -500,14 +470,13 @@ TAIL_CALL:
 			switch c.MoveNext(&c); c.Val.Type() {
 			case 'y':
 				x := c.Val.Str()
-				_, ok := state.local.m[x]
-				state.assert(!ok || state.panic("re-define %s", x))
-				state.assert(c.MoveNext(&c) || state.panic("invalid define syntax, missing bound value"))
+				state.assert(state.local.m[x].IsVoid() || state.panic("re-define %s", x)).
+					assert(c.MoveNext(&c) || state.panic("invalid define syntax, missing bound value"))
 				state.local.set(x, __exec(c.Val, state))
 			case 'l':
 				lst := c.Val.Lst()
-				state.assert(!lst.Empty() || state.panic("invalid define syntax, missing function name"))
-				state.assert(c.MoveNext(&c) || state.panic("invalid define syntax, missing bound value"))
+				state.assert(!lst.Empty() || state.panic("invalid define syntax, missing function name")).
+					assert(c.MoveNext(&c) || state.panic("invalid define syntax, missing bound value"))
 				s := Lst(Empty, head.Make("define"), lst.Val, Lst(c, head.Make("lambda"), Lst(lst.Next)))
 				return __exec(s, state)
 			default:
@@ -526,25 +495,20 @@ TAIL_CALL:
 		for i, name := range cc.nargs {
 			if cc.varg && i == len(cc.nargs)-1 {
 				values := initlistbuilder()
-				for c.MoveNext(&c); !c.Empty(); c.MoveNext(&c) {
-					values = values.append(__exec(c.Val, state))
-				}
+				c.Next.Range(func(v Value) bool { values = values.append(__exec(v, state)); return true })
 				m.set(name, values.value())
 				break
 			}
 			state.assert(c.MoveNext(&c) || state.panic("too few arguments, expect at least %d", i+1))
 			m.set(name, __exec(c.Val, state))
 		}
-		*state.curCaller = head
-		state.local, expr = m, cc.n
+		*state.curCaller, state.local, expr = head, m, cc.n
 		goto TAIL_CALL
 	}
 
 	s := State{Context: state.local, Out: Void, Caller: head}
 	args := initlistbuilder()
-	for c.MoveNext(&c); !c.Empty(); c.MoveNext(&c) {
-		args = args.append(__exec(c.Val, state))
-	}
+	c.Next.Range(func(v Value) bool { args = args.append(__exec(v, state)); return true })
 
 	*state.curCaller = head
 	state.assert(args.count == cc.fargs || (cc.varg && args.count >= cc.fargs) ||
@@ -595,10 +559,10 @@ func (ctx *Context) Exec(c Value) (output Value, err error) {
 	return __exec(c, execState{local: ctx, curCaller: &curCaller}), nil
 }
 
-func (ctx *Context) Run(tmpl string) (result interface{}, err error) {
+func (ctx *Context) Run(tmpl string) (result Value, err error) {
 	c, err := ctx.Parse(tmpl)
 	if err != nil {
-		return nil, err
+		return Void, err
 	}
 	return ctx.Exec(c)
 }
@@ -616,7 +580,7 @@ LOOP:
 			}
 			comp = comp.append(Str(t))
 		case '#':
-			switch s.Peek() {
+			switch pr := s.Peek(); pr {
 			case '|': // #| comment |#
 				for s.Scan(); ; {
 					if current, next := s.Scan(), s.Peek(); current == scanner.EOF {
@@ -628,16 +592,17 @@ LOOP:
 				}
 			case '/': // #/char
 				s.Scan()
-				text := scanToDelim(s)
-				if text == "void" {
-					comp = comp.append(Void)
-				} else {
-					r, l := utf8.DecodeRuneInString(text)
-					if l == 0 {
-						return Void, fmt.Errorf("invalid char")
-					}
-					comp = comp.append(Num(float64(r)))
+				r, l := utf8.DecodeRuneInString(scanToDelim(s))
+				if l == 0 {
+					return Void, fmt.Errorf("invalid char")
 				}
+				comp = comp.append(Num(float64(r)))
+			case 't', 'f':
+				s.Scan()
+				comp = comp.append(Bln(pr == 't'))
+			case 'v':
+				s.Scan()
+				comp = comp.append(Void)
 			default:
 				comp = comp.append(Sym("#"+scanToDelim(s), (s.Pos().Line), (s.Pos().Column)))
 			}
@@ -754,10 +719,11 @@ func scanToDelim(s *scanner.Scanner) string {
 	}
 }
 
-func (e *assertable) assert(ok bool) {
+func (e *assertable) assert(ok bool) *assertable {
 	if !ok {
 		panic(e.err)
 	}
+	return e
 }
 
 func (e *assertable) panic(t string, a ...interface{}) bool {
@@ -765,16 +731,9 @@ func (e *assertable) panic(t string, a ...interface{}) bool {
 	return false
 }
 
-func errorOrValue(v interface{}, err error) Value {
-	if err != nil {
-		return Val(err)
-	}
-	return Val(v)
-}
-
-func ifstr(v bool, t, f string) string { return [2]string{f, t}[Bln(v).BlnNum()] }
-
-// zzzzzzzz
+func ev2(v interface{}, err error) Value { return [2]Value{Val(v), Val(err)}[Bln(err != nil).BlnNum()] }
+func ifstr(v bool, t, f string) string   { return [2]string{f, t}[Bln(v).BlnNum()] }
+func ifbyte(v bool, t, f byte) byte      { return [2]byte{f, t}[Bln(v).BlnNum()] }
 
 // Val creates Value from interface{}. uint64 and int64 will be stored as they were because float64 can't handle them correctly
 func Val(v interface{}) Value {
@@ -843,15 +802,9 @@ func (v Value) Type() byte {
 		return byte(v.val)
 	default:
 		if v.val >= 1<<51 {
-			if v.val < 1<<52-1 {
-				return 'y'
-			}
-			return 'n'
+			return ifbyte(v.val < 1<<52-1, 'y', 'n')
 		}
-		if v == (Value{}) {
-			return 'v'
-		}
-		return 'i'
+		return ifbyte(v == (Value{}), 'v', 'i')
 	}
 }
 
@@ -884,13 +837,13 @@ func (v Value) String() string {
 		p.WriteString(")")
 		return p.String()
 	case 'b':
-		return strconv.FormatBool(v.Bln())
+		return ifstr(v.Bln(), "#t", "#f")
 	case 'i':
 		return "#" + fmt.Sprint(*v._itfptr())
 	case 'f':
 		return v.Fun().String()
 	default:
-		return "#/void"
+		return "#v"
 	}
 }
 func (v Value) GoString() string { return fmt.Sprintf("{val:%016x ptr:%016x}", v.val, v.ptr) }
@@ -927,15 +880,13 @@ func (v Value) Make(text string) Value {
 func (v Value) Equals(v2 Value) bool {
 	if v == v2 {
 		return true
-	}
-	if vflag, v2flag := v.Type(), v2.Type(); vflag == v2flag {
-		if vflag == 'n' {
+	} else if vflag, v2flag := v.Type(), v2.Type(); vflag == v2flag {
+		switch vflag {
+		case 'n':
 			return v.val == v2.val
-		}
-		if vflag == 'y' || vflag == 's' {
-			return *(*string)(v.ptr) == *(*string)(v2.ptr)
-		}
-		if vflag == 'i' {
+		case 'y', 's':
+			return v.Str() == v2.Str()
+		case 'i':
 			return *v._itfptr() == *v2._itfptr()
 		}
 	}
@@ -960,10 +911,7 @@ func (l *Pair) Empty() bool {
 }
 func (l *Pair) testEmpty() byte {
 	if l.Next == nil {
-		if !l._empty {
-			return 'i'
-		}
-		return 't'
+		return ifbyte(l._empty, 't', 'i')
 	}
 	return 'f'
 }
@@ -1090,8 +1038,7 @@ func (l *Pair) Take(n int) *Pair {
 		if n == -1 {
 			if !l.HasNext() { // we are at the last position, this means l.Len() == 1
 				return Empty
-			}
-			if l.HasNext() && !l.Next.HasNext() { // we are at second to last position
+			} else if /* l.HasNext() &&*/ !l.Next.HasNext() { // we are at second to last position
 				return b.L
 			}
 		}
@@ -1105,13 +1052,8 @@ func (l *Pair) Take(n int) *Pair {
 	return b.L
 }
 func (l *Pair) Append(l2 *Pair) *Pair {
-	if l.Empty() {
-		return l2
-	}
 	b := initlistbuilder()
-	for ; !l.Empty(); l = l.Next {
-		b = b.append(l.Val)
-	}
+	l.Range(func(v Value) bool { b = b.append(v); return true })
 	*b.p = *l2
 	return b.L
 }
