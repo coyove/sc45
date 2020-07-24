@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"math/big"
 	"os"
 	"reflect"
 	"strconv"
@@ -121,19 +122,9 @@ func init() {
 		}
 		s.Out = last
 	})
-	Default.Install("i64", 1|Macro, func(s *State) {
-		t, unsigned := strings.TrimPrefix(s.InType('y').Str(), "@"), false
-		if strings.HasPrefix(t, "u") {
-			t, unsigned = t[1:], true
-		}
-		if unsigned {
-			v, _ := strconv.ParseUint(t, 0, 64)
-			s.Out = Val(v)
-		} else {
-			v, _ := strconv.ParseInt(t, 0, 64)
-			s.Out = Val(v)
-		}
-	})
+	Default.Install("i64", 1|Macro, func(s *State) { v, _ := strconv.ParseInt(trystr(s), 0, 64); s.Out = Val(v) })
+	Default.Install("u64", 1|Macro, func(s *State) { v, _ := strconv.ParseUint(trystr(s), 0, 64); s.Out = Val(v) })
+	Default.Install("bigint", 1|Macro, func(s *State) { i := &big.Int{}; i.UnmarshalText([]byte(trystr(s))); s.Out = Val(i) })
 	Default.Install("go->value", 1, func(s *State) {
 		rv := reflect.ValueOf(s.In().Val())
 		switch rv.Kind() {
@@ -649,4 +640,13 @@ func vlisttointerface(l []Value) []interface{} {
 		a[i] = l[i]
 	}
 	return a
+}
+
+func trystr(s *State) string {
+	switch s.In().Type() {
+	case 's', 'y', 'n':
+		return s.LastIn().Str()
+	default:
+		return ""
+	}
 }

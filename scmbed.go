@@ -677,9 +677,9 @@ LOOP:
 		default:
 			text := s.TokenText() + scanToDelim(s)
 			if v, ok := strconv.ParseInt(text, 0, 64); ok == nil || tok == scanner.Int {
-				comp = comp.append(Num(float64(v)))
+				comp = comp.append(NumStr(float64(v), text))
 			} else if v, ok := strconv.ParseFloat(text, 64); ok == nil || tok == scanner.Float {
-				comp = comp.append(Num(v))
+				comp = comp.append(NumStr(v, text))
 			} else {
 				comp = comp.append(Sym(text, (s.Pos().Line), (s.Pos().Column)))
 			}
@@ -824,9 +824,10 @@ func Num(v float64) Value {
 	}
 	return Value{val: ^math.Float64bits(v)}
 }
-func Str(v string) (vs Value) { return Value{val: 's', ptr: unsafe.Pointer(&v)} }
-func Fun(f *Func) Value       { return Value{val: 'f', ptr: unsafe.Pointer(f)} }
-func _Qt(v Value) Value       { return Value{val: 'q', ptr: unsafe.Pointer(&v)} } // internal use
+func NumStr(v float64, o string) Value { n := Num(v); n.ptr = unsafe.Pointer(&o); return n }
+func Str(v string) (vs Value)          { return Value{val: 's', ptr: unsafe.Pointer(&v)} }
+func Fun(f *Func) Value                { return Value{val: 'f', ptr: unsafe.Pointer(f)} }
+func _Qt(v Value) Value                { return Value{val: 'q', ptr: unsafe.Pointer(&v)} } // internal use
 
 //go:nosplit
 func (v *Value) _itfptr() *interface{} { return (*interface{})(unsafe.Pointer(v)) }
@@ -928,6 +929,9 @@ func (v Value) Equals(v2 Value) bool {
 		return true
 	}
 	if vflag, v2flag := v.Type(), v2.Type(); vflag == v2flag {
+		if vflag == 'n' {
+			return v.val == v2.val
+		}
 		if vflag == 'y' || vflag == 's' {
 			return *(*string)(v.ptr) == *(*string)(v2.ptr)
 		}
