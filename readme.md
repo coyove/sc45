@@ -39,5 +39,5 @@ Inside REPL:
 
 # Language details
 - `call/cc` is not supported (due to scmbed's recursive evaluation intepreter, this is also impossible)
-- Numbers are all float64, no numerical tower. For `uint64` and `int64`, use `(i64 ...)` to create them
-- Macro definition syntax: `(lambda# (paramlist) body)`, it is a legit function which takes expressions as inputs and outputs expressions, so it is more like Lisp macro
+- Numbers are all float64, no numerical tower. For `uint64` and `int64`, use `(i64/u64 ...)` to create them
+- Macro definition syntax: `(lambda-macro (paramlist) body)`, it is a legit function which takes expressions as inputs and outputs expressions, so it is more like Lisp macro

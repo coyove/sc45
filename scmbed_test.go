@@ -23,7 +23,7 @@ func (d *dummy) M(v string, args ...string) string {
 func TestOne(t *testing.T) {
 	it := New()
 	it.Install("assert", 1, func(s *State) {
-		if !s.In().IsTrue() {
+		if s.In().IsFalse() {
 			panic(fmt.Errorf("assertion failed"))
 		}
 	})
@@ -39,16 +39,16 @@ func TestOne(t *testing.T) {
 	// 		}
 	// 	})
 	// 	// it.Install("callee", "", func(v int64) int64 { return v * 10 })
-	// 	it.Install("test/struct-gen", 1, func(s *State) {
-	// 		if !s.In(0, 0).IsTrue() {
-	// 			s.Out = Val((*dummy)(nil))
-	// 			return
-	// 		}
-	// 		d := &dummy{}
-	// 		d.V.V2 = true
-	// 		s.Out = Val(d)
-	// 		return
-	// 	})
+	it.Install("test/struct-gen", 1, func(s *State) {
+		if s.In().IsFalse() {
+			s.Out = Val((*dummy)(nil))
+			return
+		}
+		d := &dummy{}
+		d.V.V2 = true
+		s.Out = Val(d)
+		return
+	})
 	it.InstallGo("make/vararg", func(v ...interface{}) []interface{} {
 		return v
 	})
@@ -67,18 +67,18 @@ func TestOne(t *testing.T) {
 		}
 		s.Out = Lst(Empty, l...)
 	})
-	// 	it.Install("range", 2, func(s *State) {
-	// 		m := s.InMap(0)
-	// 		f := s.In(1, 'f')
-	// 		for k, v := range m {
-	// 			err, ok := f.Fun().Call(Str(k), v)
-	// 			log.Println("===", err, ok)
-	// 			if !err.IsTrue() {
-	// 				s.Out = v
-	// 				return
-	// 			}
-	// 		}
-	// 	})
+	it.Install("range", 2, func(s *State) {
+		m := s.InMap()
+		f := s.InType('f')
+		for k, v := range m {
+			err, ok := f.Fun().Call(Str(k), v)
+			log.Println("===", err, ok)
+			if err.IsFalse() {
+				s.Out = v
+				return
+			}
+		}
+	})
 	assert := func(v string) {
 		r, err := it.Run(v)
 		if err != nil {
@@ -90,8 +90,12 @@ func TestOne(t *testing.T) {
 		s.In()
 		s.Out = s.In()
 	})
-
-	assert(`(define #or (lambda-macro args
+	assert(`(define-macro let*-native-match (lambda L
+			(match L ()
+				( (b* (s v)) body ) (quasiquote (let*-native-match ,b (let ((,s ,v)) ,body)))
+				( () body ) body
+		)`)
+	assert(`(define-macro #or (lambda args
 	 	 		(match args ()
 					() '#f
 					(a) a
@@ -111,7 +115,7 @@ func TestOne(t *testing.T) {
 	assert(`(define Fib (lambda (v) (if (< v 2) v (+ (Fib (- v 1)) (Fib (- v 2)))))) (assert (= 21 (Fib 8) `)
 	// assert(`(Fib 35) `)
 	// 	assert("(eval (unwrap-macro (list 'define `(madd2 a ,(string->symbol \"b\")) (list 'let `[(c ,(cons '+ (cons 'a (cons 'b [] ))) )] '(* (let ((a a)) a) b c))")
-	assert(`(define let*-native (lambda-macro (bindings . body)
+	assert(`(define-macro let*-native (lambda (bindings . body)
 	 		(set! body (cons 'begin body))
 	 		(letrec ((work (lambda (lst)
 	 			(if (not (null? lst)) (begin
@@ -120,7 +124,9 @@ func TestOne(t *testing.T) {
 	 			))))) (work bindings))
 	 		body
 	 	)`)
+
 	assert("(let*-native ((a 1) (b (+ a 1)) (c (+ b a))) (assert (= c 3))")
+	assert("(let*-native-match ((a 1) (b (+ a 1)) (c (+ b a))) (assert (= c 3))")
 	// 	assert(`(assert (= (madd2 10 20) 6000)))`)
 	assert("(assert (= #/中 0x4e2d")
 	assert(`(if #f (+ 1 #| inline || comment (assert false) #|#  2 3.5) (lambda (a b) ())`)
@@ -138,12 +144,13 @@ func TestOne(t *testing.T) {
 	 				)))
 	 			(= list1 list2)))
 	
+		 (assert (list-eq? '(cons 2 (3 4 5 13)) ` + "`" + `(cons 2 ,(cons 3 ` + "`" + `(4 5 ,(+ 6 7))))))
 	 	 (let () (define a '(1))
 	 	 (define #b (append a '(3) ))
 	 	 (set-car! a 100)
 	 	 (assert (list-eq? #b '(1 3)))
-	 	 (assert (list-eq? (go-value-wrap (make/vararg 1 2 "a")) '(1 2 "a")))
-	 	 (assert (null? (go-value-wrap (make/vararg))))
+	 	 (assert (list-eq? (go->value (make/vararg 1 2 "a")) '(1 2 "a")))
+	 	 (assert (null? (go->value (make/vararg))))
 	 	 (assert (list-eq? (make/list 1000) (make/list 1000)`)
 	assert("(assert (list-eq? (quasiquote (1 2 3 ,(cons 4 `(5 ,(let ((a 2)) (* a 3) ))))) '(1 2 3 (4 5 6))))")
 	assert("(assert (list-eq? `( 1 ',(+ 2 3)) '(1 '5)))")
@@ -208,25 +215,19 @@ func TestOne(t *testing.T) {
 	assert(`(assert (= 3 ( [lambda (a . r) (+ a (length r)) ] 1 2 3)`)
 	assert(`(assert (= 0 ( [lambda (a . r) (length r)] 1)`)
 	// 	assert(`(let ((a (json-parse "{\"a\":{\"b\":1}}"))) (assert (= (map-get (map-get a "a") "b") 1 `)
-	// 	assert(`(assert (= 3 ((lambda (a b) (+ a b)) 1 2)`)
-	// 	assert(`
-	// 	 (define (nth-cdr list n)
-	// 	 	(if (= n 0)
-	// 	 		list
-	// 	 		(nth-cdr (cdr list) (- n 1))))
-	//
-	// 	 (define (set-nth! list n v)
-	// 	 	(set-car! (nth-cdr list n) v))
-	//
-	// 	 (define# (defun name paramlist body)
-	// 	 	(begin
-	// 	 		(define setter '(define))
-	// 	 		(set! setter (append setter (cons name () )))
-	// 	 		(define fun (append '(lambda) (list paramlist body) ))
-	// 	 		(set! setter (add setter fun ))
-	// 	 		setter
-	// 	 	`)
-	// 	assert(`(defun a (a # r) (* a (length r))) (defun b(a # r) (* a (length r))) (assert (= 10 (a 5 "a" ())))
+	assert(`
+	 	 (define (nth-cdr list n)
+	 	 	(if (= n 0)
+	 	 		list
+	 	 		(nth-cdr (cdr list) (- n 1))))
+	
+	 	 (define (set-nth! list n v)
+	 	 	(set-car! (nth-cdr list n) v))
+	
+	 	 (define-macro defun (lambda (name paramlist body)
+	 	 	(quasiquote (define ,name (lambda ,paramlist ,body))
+	 	 	`)
+	assert(`(defun a (a . r) (* a (length r))) (defun b(a . r) (* a (length r))) (assert (= 10 (a 5 "a" ())))
 	// 	(assert (= 1 (b 1 1
 	// 	`)
 	// 	assert(`(eval (unwrap-macro (list 'defun 'madd '(a b) '(+ a b`)
@@ -237,39 +238,33 @@ func TestOne(t *testing.T) {
 	// 	assert("(stringify '(+ \"asd\" 2))")
 	//
 	assert(`(assert (list-eq? '(2 3) ((lambda (a . r) r) 1 2 3`)
-	// 	assert(`(define s (test/struct-gen true)) (struct-set! 'V 'V2 false s) (assert (not (struct-get 'V 'V2 s`)
-	// 	assert(`(set! s (test/struct-gen true)) (setf! s.V.V2 false) (assert (not (getf s.V.V2`)
-	// 	assert(`(assert (= ((if true + -) (- (* 2)) 1) (string->number "-1"))`)
+	assert(`(define s (test/struct-gen true)) (struct-set! s false 'V 'V2) (assert (not (struct-get s 'V 'V2`)
+	assert(`(set! s (test/struct-gen true)) (setf! s.V.V2 false) (assert (not (getf s.V.V2`)
+	assert(`(assert (= ((if true + -) (- (* 2)) 1) (string->number "-1"))`)
 	// 	assert(`(assert (= (car (var/test 1 2 3)) 3)`)
 	// 	assert(`(assert (error? (var/test 100 2 3)`)
-	// 	assert(`(assert (= true (< 1 2`)
-	// 	assert(`(assert (if true true false`)
-	// 	assert(`(define ha (if (not #t) false #t)) (assert ha`)
-	// 	assert(`(assert ha`)
-	// 	assert(`(assert (= (+ .5 .5) 1.`)
-	// 	assert(`(assert (= (+ "a" "b" "c") "abc"`)
-	// 	assert(`(set! a 1) (assert (= ( + a 2) 3`)
-	// 	assert(`(assert (= "b" (range (map-new "a" "A" "b" "b" "c" "") (lambda (l r) (if (= l r) (error "ok") #t`)
-	// 	// 	assert(`(assert (eq (list 1 2 3) (cdr (list 0 1 2 3)`)
-	// 	assert(`(define args '(1 2 3) ) (assert (= 6 (apply + args) `)
-	// 	assert(`
-	// 			(set! args '(1 2 "a" "b") )
-	// 			(define Fun (lambda args
-	// 					(if (null? args)
-	// 						""
-	// 						(begin
-	// 							(define head (car args))
-	// 							(+
-	// 								(if (number? head) (stringify head) head)
-	// 								(apply Fun (cdr args))
-	// 							)
-	// 						)
-	// 					)
-	//
-	// 			))
-	// 			(assert (= "12ab" (apply Fun args
-	// 			`)
-	// 	assert(`(assert (= (vector-nth "abc" 2) 99`)
+	assert(`(assert (= (+ .5 .5) 1.`)
+	assert(`(assert (= (+ "a" "b" "c") "abc"`)
+	assert(`(assert (= "b" (range (hash-new "a" "A" "b" "b" "c" "") (lambda (l r) (!= l r)`)
+	assert(`(define args '(1 2 3) ) (assert (= 6 (apply + args) `)
+	assert(`
+	 			(set! args '(1 2 "a" "b") )
+	 			(define Fun (lambda args
+	 					(if (null? args)
+	 						""
+	 						(begin
+	 							(define head (car args))
+	 							(+
+	 								(if (number? head) (stringify head) head)
+	 								(apply Fun (cdr args))
+	 							)
+	 						)
+	 					)
+	
+	 			))
+	 			(assert (= "12ab" (apply Fun args
+	 			`)
+	assert(`(assert (= (vector-nth "abc" 2) 99`)
 	// 	assert(`(assert (= "true" (cond
 	// 			((= 1 2)     (assert false))
 	// 			((> "a" "b") (assert false))
@@ -278,11 +273,11 @@ func TestOne(t *testing.T) {
 	// 			((= 1 2)  (assert false))
 	// 			(else     (assert true))
 	// 			(true     (assert false)`)
-	// 	assert(`(assert (= 2 (pcall (lambda (e) (+ e 1)) (lambda () (assert (= 1 1)) (raise 1) (* 3 4)))`)
-	// 	assert(`(assert (<= 1 2 2 4`)
-	// 	assert(`(assert (>= 10 2 2 1`)
-	// 	assert(`(let ((a 1)) (assert (= 2 (eval '(+ a 1`)
-	// 	assert(`(set! a (map-new "a" 1)) (map-set! a "a" 2) (assert (= (map-get a "a") 2)`)
+	assert(`(assert (= 2 (pcall (lambda (e) (+ e 1)) (lambda () (assert (= 1 1)) (raise 1) (* 3 4)))`)
+	assert(`(assert (<= 1 2 2 4`)
+	assert(`(assert (>= 10 2 2 1`)
+	assert(`(let ((a 1)) (assert (= 2 (eval '(+ a 1`)
+	assert(`(set! a (hash-new "a" 1)) (hash-set! a "a" 2) (assert (= (hash-get a "a") 2)`)
 }
 
 // func BenchmarkRun(b *testing.B) {

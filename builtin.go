@@ -134,25 +134,37 @@ func init() {
 			s.Out = Val(v)
 		}
 	})
-	Default.Install("go-value-wrap", 1, func(s *State) { s.Out = ValRec(s.In().Val()) })
-	// 	Default.Install("map-new", Vararg, func(s *State) {
-	// 		m := map[string]Value{}
-	// 		for i := 0; i < len(s.Args); i += 2 {
-	// 			m[s.In(i, 's').Str()] = s.In(i+1, 0)
-	// 		}
-	// 		s.Out = Val(m)
-	// 	})
-	// 	Default.Install("map-set!", 3, func(s *State) { s.InMap(0)[s.In(1, 's').Str()] = s.In(2, 0) })
-	// 	Default.Install("map-delete!", 2, func(s *State) { delete(s.InMap(0), s.In(1, 's').Str()) })
-	// 	Default.Install("map-get", 2, func(s *State) { s.Out = s.InMap(0)[s.In(1, 's').Str()] })
-	// 	Default.Install("map-contains", 2, func(s *State) { _, ok := s.InMap(0)[s.In(1, 's').Str()]; s.Out = Bln(ok) })
-	// 	Default.Install("map-keys", 1, func(s *State) {
-	// 		ret := make([]Value, 0, len(s.InMap(0)))
-	// 		for i := range s.InMap(0) {
-	// 			ret = append(ret, Str(i))
-	// 		}
-	// 		s.Out = Lst(ret...)
-	// 	})
+	Default.Install("go->value", 1, func(s *State) {
+		rv := reflect.ValueOf(s.In().Val())
+		switch rv.Kind() {
+		case reflect.Slice, reflect.Array:
+			l := initlistbuilder()
+			for i := 0; i < rv.Len(); i++ {
+				l = l.append(Val(rv.Index(i).Interface()))
+			}
+			s.Out = l.value()
+		default:
+			s.Out = s.LastIn()
+		}
+	})
+	Default.Install("hash-new", Vararg, func(s *State) {
+		m := map[string]Value{}
+		for !s.Args.Empty() {
+			m[s.InType('s').Str()] = s.In()
+		}
+		s.Out = Val(m)
+	})
+	Default.Install("hash-set!", 3, func(s *State) { s.InMap()[s.InType('s').Str()] = s.In() })
+	Default.Install("hash-delete!", 2, func(s *State) { delete(s.InMap(), s.InType('s').Str()) })
+	Default.Install("hash-get", 2, func(s *State) { s.Out = s.InMap()[s.InType('s').Str()] })
+	Default.Install("hash-contains", 2, func(s *State) { _, ok := s.InMap()[s.InType('s').Str()]; s.Out = Bln(ok) })
+	Default.Install("hash-keys", 1, func(s *State) {
+		ret := initlistbuilder()
+		for i := range s.InMap() {
+			ret = ret.append(Str(i))
+		}
+		s.Out = ret.value()
+	})
 	// 	Default.Install("skip", 2, func(s *State) {
 	// 		l := s.In(1, 'l').Lst()
 	// 		for i := 0; i < int(s.In(0, 'n').Num()); i++ {
@@ -241,7 +253,7 @@ func init() {
 		for i := 0; i < rl.Len(); i++ {
 			flag, err := fn.Fun().Call(Num(float64(i)), Val(rl.Index(i).Interface()))
 			s.assert(err == nil || s.panic("invalid callback "))
-			if !flag.IsTrue() {
+			if flag.IsFalse() {
 				break
 			}
 		}
@@ -268,17 +280,15 @@ func init() {
 		})
 		s.Out = left
 	})
-	// 	Default.Install("reduce-right", 3, func(s *State) {
-	// 		i, rl, right, fn := 0, s.In(2, 'l').Lst(), s.In(1, 0), s.In(0, 'f')
-	// 		var err error
-	// 		for l, ok := Head(rl, true, nil); ok; l, ok = Head(rl, true, nil) {
-	// 			right, err = fn.Fun().Call(right, l)
-	// 			s.assert(err == nil || s.panic("reduce-right: error at element #%d: %v", i, err))
-	// 			rl, _ = Init(rl)
-	// 			i++
-	// 		}
-	// 		s.Out = right
-	// 	})
+	Default.Install("reduce-right", 3, func(s *State) {
+		fn, right, rl := s.InType('f'), s.In(), s.InType('l').Lst().ToSlice()
+		var err error
+		for i := len(rl) - 1; i >= 0; i-- {
+			right, err = fn.Fun().Call(right, rl[i])
+			s.assert(err == nil || s.panic("reduce-right: error at element #%d: %v", i, err))
+		}
+		s.Out = right
+	})
 	// 	Default.Install("cond", Macro|Vararg, func(s *State) {
 	// 		if len(s.Args) == 0 {
 	// 			s.Out = s.Caller.Make("true")
@@ -306,48 +316,31 @@ func init() {
 	// 	// 			s.Out = s.Out.(bool) && reflect.DeepEqual(a, s.Args[i])
 	// 	// 		}
 	// 	// 	})
-	// 	Default.Install("struct-get", 1|Vararg, func(s *State) {
-	// 		rv := reflect.ValueOf(s.In(len(s.Args)-1, 0).Val())
-	// 		for i := 0; i < len(s.Args)-1; i++ {
-	// 			m := s.In(i, 'y').Str()
-	// 			if rv.Kind() == reflect.Ptr {
-	// 				rv = rv.Elem()
-	// 			}
-	// 			tmp := rv.FieldByName(m)
-	// 			if i < len(s.Args)-1-1 { // not last atom
-	// 				s.assert(tmp.IsValid() || s.panic("field %q not found", m))
-	// 				rv = tmp
-	// 				continue
-	// 			}
-	// 			if tmp.IsValid() {
-	// 				s.Out = Val(tmp.Interface())
-	// 				return
-	// 			}
-	// 			tmp = rv.MethodByName(m)
-	// 			if !tmp.IsValid() {
-	// 				tmp = rv.Addr().MethodByName(m)
-	// 			}
-	// 			s.assert(tmp.IsValid() || s.panic("method %q not found", m))
-	// 			rv = tmp
-	// 		}
-	// 		s.Out = Val(rv.Interface())
-	// 	})
-	// 	Default.Install("struct-set!", 1|Vararg, func(s *State) {
-	// 		v := s.In(len(s.Args)-2, 0)
-	// 		f := reflect.ValueOf(s.In(len(s.Args)-1, 0).Val())
-	// 		if f.Kind() == reflect.Ptr {
-	// 			f = f.Elem()
-	// 		}
-	// 		for i := 0; i < len(s.Args)-2; i++ {
-	// 			m := s.In(i, 'y').Str()
-	// 			f = f.FieldByName(m)
-	// 			if i != len(s.Args)-3 { // not last atom
-	// 				s.assert(f.IsValid() || s.panic("field %q not found", m))
-	// 				continue
-	// 			}
-	// 			f.Set(v.GoTypedValue(f.Type()))
-	// 		}
-	// 	})
+	Default.Install("struct-get", 1|Vararg, func(s *State) {
+		rv := reflect.ValueOf(s.In().Val())
+		s.Args.Range(func(v Value) bool {
+			if rv.Kind() == reflect.Ptr {
+				rv = rv.Elem()
+			}
+			s.assert(v.Type() == 'y' || s.panic("expect field name to be symbol: %v", v))
+			rv = rv.FieldByName(v.Str())
+			return true
+		})
+		s.Out = Val(rv.Interface())
+	})
+	Default.Install("struct-set!", 2|Vararg, func(s *State) {
+		rv := reflect.ValueOf(s.In().Val())
+		v := s.In()
+		s.Args.Range(func(v Value) bool {
+			if rv.Kind() == reflect.Ptr {
+				rv = rv.Elem()
+			}
+			s.assert(v.Type() == 'y' || s.panic("expect field name to be symbol: %v", v))
+			rv = rv.FieldByName(v.Str())
+			return true
+		})
+		rv.Set(reflect.ValueOf(v.Val()))
+	})
 	// 	Default.Install("^", Vararg, func(s *State) {
 	// 		p := bytes.Buffer{}
 	// 		for i := range s.Args {
@@ -397,50 +390,47 @@ func init() {
 	// 			}
 	// 		}
 	// 	})
-	// 	Default.Install("setf!", 2|Macro, func(s *State) {
-	// 		a := s.In(0, 'y').Str()
-	// 		parts := strings.Split(a, ".")
-	// 		s.assert(len(parts) > 1 || s.panic("too few fields to set"))
-	// 		structname := parts[0]
-	// 		setter := []Value{s.In(0, 0).Make("struct-set!")}
-	// 		for i := 1; i < len(parts); i++ {
-	// 			setter = append(setter, _Vquote(s.In(0, 0).Make(parts[i])))
-	// 		}
-	// 		setter = append(setter, s.In(1, 0), s.In(0, 0).Make(structname))
-	// 		s.Out = Lst(setter...)
-	// 	})
-	// 	Default.Install("getf", 1|Macro, func(s *State) {
-	// 		a := s.In(0, 'y').Str()
-	// 		parts := strings.Split(a, ".")
-	// 		s.assert(len(parts) > 1 || s.panic("too few fields to get"))
-	// 		structname := parts[0]
-	// 		setter := []Value{s.In(0, 0).Make("struct-get")}
-	// 		for i := 1; i < len(parts); i++ {
-	// 			setter = append(setter, _Vquote(s.In(0, 0).Make(parts[i])))
-	// 		}
-	// 		setter = append(setter, s.In(0, 0).Make(structname))
-	// 		s.Out = Lst(setter...)
-	// 	})
+	Default.Install("setf!", 2|Macro, func(s *State) {
+		a, v := s.InType('y').Str(), s.In()
+		parts := strings.Split(a, ".")
+		s.assert(len(parts) > 1 || s.panic("too few fields to set"))
+		structname := parts[0]
+		setter := initlistbuilder().append(v.Make("struct-set!")).append(v.Make(structname)).append(v)
+		for i := 1; i < len(parts); i++ {
+			setter = setter.append(_Qt(v.Make(parts[i])))
+		}
+		s.Out = setter.value()
+	})
+	Default.Install("getf", 1|Macro, func(s *State) {
+		a := s.InType('y').Str()
+		parts := strings.Split(a, ".")
+		s.assert(len(parts) > 1 || s.panic("too few fields to get"))
+		structname := parts[0]
+		setter := initlistbuilder().append(s.Caller.Make("struct-get")).append(s.Caller.Make(structname))
+		for i := 1; i < len(parts); i++ {
+			setter = setter.append(_Qt(s.Caller.Make(parts[i])))
+		}
+		s.Out = setter.value()
+	})
+	// 	Default.Install("write-file",
+	// 		"write data to file, 'json or 'j if needed",
+	// 		func(fn string, a interface{}, t OptAtom) error {
+	// 			var buf []byte
+	// 			switch t.A.v {
+	// 			case "j":
+	// 				buf, _ = json.Marshal(a)
+	// 			case "json":
+	// 				buf, _ = json.MarshalIndent(a, "", "  ")
+	// 			default:
+	// 				buf = []byte(fmt.Sprint(a))
+	// 			}
+	// 			return ioutil.WriteFile(fn, buf, 0777)
+	// 		})
 	//
-	// 	// 	// 	Default.Install("write-file",
-	// 	// 	// 		"write data to file, 'json or 'j if needed",
-	// 	// 	// 		func(fn string, a interface{}, t OptAtom) error {
-	// 	// 	// 			var buf []byte
-	// 	// 	// 			switch t.A.v {
-	// 	// 	// 			case "j":
-	// 	// 	// 				buf, _ = json.Marshal(a)
-	// 	// 	// 			case "json":
-	// 	// 	// 				buf, _ = json.MarshalIndent(a, "", "  ")
-	// 	// 	// 			default:
-	// 	// 	// 				buf = []byte(fmt.Sprint(a))
-	// 	// 	// 			}
-	// 	// 	// 			return ioutil.WriteFile(fn, buf, 0777)
-	// 	// 	// 		})
-	// 	// 	//
-	// 	// 	// 	Default.Install("read-file", "read data from file", func(fn string) (string, error) {
-	// 	// 	// 		buf, err := ioutil.ReadFile(fn)
-	// 	// 	// 		return string(buf), err
-	// 	// 	// 	})
+	// 	Default.Install("read-file", "read data from file", func(fn string) (string, error) {
+	// 		buf, err := ioutil.ReadFile(fn)
+	// 		return string(buf), err
+	// 	})
 	Default.Install("$", Macro|Vararg, func(s *State) {
 		v := Lst(s.Args).String()
 		expr, err := parser.ParseExpr(v)
@@ -639,7 +629,7 @@ func init() {
 }
 
 func (v Value) GoTypedValue(t reflect.Type) reflect.Value {
-	if v.Type() == 'a' && t.Kind() == reflect.String {
+	if v.Type() == 'y' && t.Kind() == reflect.String {
 		return reflect.ValueOf(v.Str())
 	}
 	vv := v.Val()
@@ -660,33 +650,3 @@ func vlisttointerface(l []Value) []interface{} {
 	}
 	return a
 }
-
-// func maxdepth(v []Value) int {
-// 	d := 1
-// 	for _, e := range v {
-// 		if e.Type() != 'd' {
-// 			continue
-// 		}
-// 		if x := 1 + maxdepth(e.Lst()); x > d {
-// 			d = x
-// 		}
-// 	}
-// 	return d
-// }
-//
-// func Range(v []Value, fn func(int, Value) (Value, bool)) { _range(0, v, fn) }
-//
-// func _range(idx int, v []Value, fn func(int, Value) (Value, bool)) (newidx int, cont bool) {
-// 	for i, el := range v {
-// 		if el.Type() != 'd' {
-// 			v[i], cont = fn(idx, el)
-// 			idx++
-// 		} else {
-// 			idx, cont = _range(idx, el.Lst(), fn)
-// 		}
-// 		if !cont {
-// 			return idx, false
-// 		}
-// 	}
-// 	return idx, true
-// }
