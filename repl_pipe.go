@@ -1,6 +1,6 @@
 // +build linux darwin freebsd
 
-package repl
+package scmbed
 
 import (
 	"bytes"
@@ -9,11 +9,9 @@ import (
 	"os"
 	"syscall"
 	"unicode"
-
-	"github.com/coyove/scmbed"
 )
 
-func RunSimplePipeREPL(it *scmbed.Context, path string) error {
+func (it *Context) RunSimplePipeREPL(path string) error {
 	os.Remove(path)
 	if err := syscall.Mkfifo(path, 0777); err != nil {
 		return err
@@ -45,7 +43,7 @@ done
 	}
 
 	ww := &bytes.Buffer{}
-	scmbed.DefaultStdout = ww
+	DefaultStdout = ww
 
 	for {
 		f, err := os.Open(path)

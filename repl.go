@@ -1,22 +1,20 @@
-package repl
+package scmbed
 
 import (
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
-
-	"github.com/coyove/scmbed"
 )
 
-func InjectDebugPProfREPL(it *scmbed.Context, title string) {
+func (it *Context) InjectDebugPProfREPL(title string) {
 	type respStruct struct {
 		Result string
 		Stdout string
 	}
 
 	ww := &bytes.Buffer{}
-	scmbed.DefaultStdout = ww
+	DefaultStdout = ww
 
 	http.HandleFunc("/debug/pprof/repl", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {

@@ -11,11 +11,11 @@ func init() {
     ...
 
     // 1. If your server has debug/pprof enabled:
-    repl.InjectDebugPProfREPL(it, "Title")
+    it.InjectDebugPProfREPL("Title")
     // Navigate to http://.../debug/pprof/repl to use the REPL
 
     // 2. If you can access to the working directory where your server is running in:
-    repl.RunSimplePipeREPL(it, "/tmp/debug_pipe")
+    it.RunSimplePipeREPL("/tmp/debug_pipe")
     // This will output a 'repl' script in current working dir, you can: cd $CWD && ./repl to use the REPL
     // Note that this script needs mkfifo and access to '/tmp/debug_pipe'
 
@@ -33,6 +33,6 @@ Inside REPL:
 ```
 
 # Language details
-- `call/cc` is not supported, due to scmbed's recursive evaluation intepreter, this is also impossible (maybe possible by goroutines, but with great performance penalty)
+- `call/cc` is not supported, due to scmbed's recursive evaluation intepreter, this is also impossible (maybe possible by using goroutines, but with great performance penalty)
 - Numbers are float64 internally, but their raw string representations are stored as well, which means you can cast a `Value` to either a `float64` or a `string`
 - Macro definition syntax: `(define-macro name (lambda (paramlist) body))`, macro is a legit function which takes expressions as inputs and outputs expressions, so it is more like Lisp macro
