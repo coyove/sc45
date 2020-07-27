@@ -41,7 +41,8 @@ func (m *Context) String() string {
 	return p.String()
 }
 
-func (ctx *Context) InstallGo(name string, fn interface{}) {
+func Fgo(fn interface{}) Value {
+	var ctx assertable
 	rf, rt := reflect.ValueOf(fn), reflect.TypeOf(fn)
 	ctx.assert(rf.Kind() == reflect.Func || ctx.panic("not func"))
 	ctx.assert(rt.NumOut() <= 2 || ctx.panic("too many return values, expect 0, 1 or 2"))
@@ -50,7 +51,7 @@ func (ctx *Context) InstallGo(name string, fn interface{}) {
 	if rt.IsVariadic() {
 		count = Vararg | (count - 1)
 	}
-	ctx.Store(name, F(count, func(s *State) {
+	return F(count, func(s *State) {
 		ins := make([]reflect.Value, 0, rt.NumIn())
 		if rt.IsVariadic() {
 			for i := 0; i < rt.NumIn()-1; i++ {
@@ -75,7 +76,7 @@ func (ctx *Context) InstallGo(name string, fn interface{}) {
 				s.Out = Val(outs[0].Interface())
 			}
 		}
-	}))
+	})
 }
 
 func init() {

@@ -22,6 +22,13 @@ func (d *dummy) M(v string, args ...string) string {
 
 func TestOne(t *testing.T) {
 	it := New()
+	assert := func(v string) {
+		r, err := it.Run(v)
+		if err != nil {
+			t.Fatal(v, err)
+		}
+		log.Println(v, "===>", r)
+	}
 	it.Store("assert", F(1, func(s *State) {
 		if s.In().IsFalse() {
 			panic(fmt.Errorf("assertion failed"))
@@ -49,9 +56,14 @@ func TestOne(t *testing.T) {
 		s.Out = Val(d)
 		return
 	}))
-	it.InstallGo("make/vararg", func(v ...interface{}) []interface{} {
-		return v
-	})
+	it.Store("make/vararg", Fgo(func(v ...interface{}) []interface{} { return v }))
+	it.Store("make/vararg2", Fgo(func(a1 int32, v2 ...string) []interface{} {
+		a := []interface{}{a1}
+		for _, v := range v2 {
+			a = append(a, v)
+		}
+		return a
+	}))
 	it.Store("make/bytes", F(1, func(s *State) {
 		n := s.In().Val()
 		l := make([]byte, n.(int64))
@@ -79,13 +91,6 @@ func TestOne(t *testing.T) {
 			}
 		}
 	}))
-	assert := func(v string) {
-		r, err := it.Run(v)
-		if err != nil {
-			t.Fatal(v, err)
-		}
-		log.Println(v, "===>", r)
-	}
 	it.Store("iff", F(2|Macro, func(s *State) {
 		s.In()
 		s.Out = s.In()
@@ -164,6 +169,8 @@ func TestOne(t *testing.T) {
 	 	 (set-car! a 100)
 	 	 (assert (list-eq? b# '(1 3)))
 	 	 (assert (list-eq? (go->value (make/vararg 1 2 "a")) '(1 2 "a")))
+	 	 (assert (list-eq? (go->value (make/vararg2 1 "a")) '(1 "a")))
+	 	 (assert (list-eq? (go->value (make/vararg2 1)) '(1)))
 	 	 (assert (null? (go->value (make/vararg))))
 	 	 (assert (list-eq? (make/list 1000) (make/list 1000)`)
 	assert("(assert (list-eq? (quasiquote (1 2 3 ,(cons 4 `(5 ,(let ((a 2)) (* a 3) ))))) '(1 2 3 (4 5 6))))")

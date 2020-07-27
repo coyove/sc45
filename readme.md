@@ -5,9 +5,9 @@ Scmbed serves one purpose: give your program an embedded REPL on-the-fly with mi
 ```Go
 func init() {
     it := scmbed.New()
-    it.InstallGo("(turn-on-flag1 ...)", func(v bool) { FLAG1 = v })
-    it.InstallGo("(turn-on-flag2 ...)", func(v bool) { FLAG2 = v })
-    it.InstallGo("(pre-setup ...)", func(n int, kafkaTopic string) { RerouteMsg(n, kafkaTopic) })
+    it.Store("turn-on-flag1", Fgo(func(v bool) { FLAG1 = v }))
+    it.Store("turn-on-flag2", Fgo(func(v bool) { FLAG2 = v }))
+    it.Store("pre-setup", Fgo(func(n int, kafkaTopic string) { RerouteMsg(n, kafkaTopic) }))
     ...
 
     // 1. If your server has debug/pprof enabled:
@@ -33,6 +33,6 @@ Inside REPL:
 ```
 
 # Language details
-- `call/cc` is not supported (due to scmbed's recursive evaluation intepreter, this is also impossible)
+- `call/cc` is not supported, due to scmbed's recursive evaluation intepreter, this is also impossible (maybe possible by goroutines, but with great performance penalty)
 - Numbers are float64 internally, but their raw string representations are stored as well, which means you can cast a `Value` to either a `float64` or a `string`
 - Macro definition syntax: `(define-macro name (lambda (paramlist) body))`, macro is a legit function which takes expressions as inputs and outputs expressions, so it is more like Lisp macro
