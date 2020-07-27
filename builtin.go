@@ -50,7 +50,7 @@ func (ctx *Context) InstallGo(name string, fn interface{}) {
 	if rt.IsVariadic() {
 		count = Vararg | (count - 1)
 	}
-	ctx.Install(name, count, func(s *State) {
+	ctx.Store(name, F(count, func(s *State) {
 		ins := make([]reflect.Value, 0, rt.NumIn())
 		if rt.IsVariadic() {
 			for i := 0; i < rt.NumIn()-1; i++ {
@@ -75,11 +75,11 @@ func (ctx *Context) InstallGo(name string, fn interface{}) {
 				s.Out = Val(outs[0].Interface())
 			}
 		}
-	})
+	}))
 }
 
 func init() {
-	Default.Install("letrec", 1|Vararg|Macro, func(s *State) {
+	Default.Store("letrec", F(1|Vararg|Macro, func(s *State) {
 		/* Unwrap to:
 		(let ((var1 ()) ... (varn ())                  // outer binds
 			(let ((var1_tmp val1) ... (varn_tmp valn)) // inner binds
@@ -103,8 +103,8 @@ func init() {
 		inner := Lst(Lst(s.Args, innersets...).Lst(), let, Lst(Empty, innerbinds...))
 		outer := []Value{let, Lst(Empty, outerbinds...), inner}
 		s.Out = Lst(Empty, outer...)
-	})
-	Default.Install("let*", 1|Vararg|Macro, func(s *State) {
+	}))
+	Default.Store("let*", F(1|Vararg|Macro, func(s *State) {
 		/* Unwrap to:
 		(let ((var1 val1)
 			(let ((var2 val2))
@@ -121,11 +121,11 @@ func init() {
 			last = Lst(Empty, let, Lst(Empty, bd), last)
 		}
 		s.Out = last
-	})
-	Default.Install("i64", 1|Macro, func(s *State) { v, _ := strconv.ParseInt(trystr(s), 0, 64); s.Out = Val(v) })
-	Default.Install("u64", 1|Macro, func(s *State) { v, _ := strconv.ParseUint(trystr(s), 0, 64); s.Out = Val(v) })
-	Default.Install("bigint", 1|Macro, func(s *State) { i := &big.Int{}; i.UnmarshalText([]byte(trystr(s))); s.Out = Val(i) })
-	Default.Install("go->value", 1, func(s *State) {
+	}))
+	Default.Store("i64", F(1|Macro, func(s *State) { v, _ := strconv.ParseInt(trystr(s), 0, 64); s.Out = Val(v) }))
+	Default.Store("u64", F(1|Macro, func(s *State) { v, _ := strconv.ParseUint(trystr(s), 0, 64); s.Out = Val(v) }))
+	Default.Store("bigint", F(1|Macro, func(s *State) { i := &big.Int{}; i.UnmarshalText([]byte(trystr(s))); s.Out = Val(i) }))
+	Default.Store("go->value", F(1, func(s *State) {
 		rv := reflect.ValueOf(s.In().Val())
 		switch rv.Kind() {
 		case reflect.Slice, reflect.Array:
@@ -137,25 +137,25 @@ func init() {
 		default:
 			s.Out = s.LastIn()
 		}
-	})
-	Default.Install("hash-new", Vararg, func(s *State) {
+	}))
+	Default.Store("hash-new", F(Vararg, func(s *State) {
 		m := map[string]Value{}
 		for !s.Args.Empty() {
 			m[s.InType('s').Str()] = s.In()
 		}
 		s.Out = Val(m)
-	})
-	Default.Install("hash-set!", 3, func(s *State) { s.InMap()[s.InType('s').Str()] = s.In() })
-	Default.Install("hash-delete!", 2, func(s *State) { delete(s.InMap(), s.InType('s').Str()) })
-	Default.Install("hash-get", 2, func(s *State) { s.Out = s.InMap()[s.InType('s').Str()] })
-	Default.Install("hash-contains", 2, func(s *State) { _, ok := s.InMap()[s.InType('s').Str()]; s.Out = Bln(ok) })
-	Default.Install("hash-keys", 1, func(s *State) {
+	}))
+	Default.Store("hash-set!", F(3, func(s *State) { s.InMap()[s.InType('s').Str()] = s.In() }))
+	Default.Store("hash-delete!", F(2, func(s *State) { delete(s.InMap(), s.InType('s').Str()) }))
+	Default.Store("hash-get", F(2, func(s *State) { s.Out = s.InMap()[s.InType('s').Str()] }))
+	Default.Store("hash-contains", F(2, func(s *State) { _, ok := s.InMap()[s.InType('s').Str()]; s.Out = Bln(ok) }))
+	Default.Store("hash-keys", F(1, func(s *State) {
 		ret := initlistbuilder()
 		for i := range s.InMap() {
 			ret = ret.append(Str(i))
 		}
 		s.Out = ret.value()
-	})
+	}))
 	// 	Default.Install("skip", 2, func(s *State) {
 	// 		l := s.In(1, 'l').Lst()
 	// 		for i := 0; i < int(s.In(0, 'n').Num()); i++ {
@@ -212,34 +212,34 @@ func init() {
 	// 		body = append(body, s.Args[1:]...)
 	// 		s.Out = Lst(body...)
 	// 	})
-	Default.Install("vector-bytes", 1, func(s *State) { s.Out = Val(make([]byte, int(s.InType('n').Num()))) })
-	Default.Install("vector-strings", 1, func(s *State) { s.Out = Val(make([]string, int(s.InType('n').Num()))) })
-	Default.Install("vector-ints", 1, func(s *State) { s.Out = Val(make([]int, int(s.InType('n').Num()))) })
-	Default.Install("vector-int64s", 1, func(s *State) { s.Out = Val(make([]int64, int(s.InType('n').Num()))) })
-	Default.Install("vector-len", 1, func(s *State) { s.Out = Num(float64((reflect.ValueOf(s.In().Val()).Len()))) })
-	Default.Install("vector-null?", 1, func(s *State) { s.Out = Bln(reflect.ValueOf(s.In().Val()).Len() == 0) })
-	Default.Install("vector-nth", 2, func(s *State) {
+	Default.Store("vector-bytes", F(1, func(s *State) { s.Out = Val(make([]byte, int(s.InType('n').Num()))) }))
+	Default.Store("vector-strings", F(1, func(s *State) { s.Out = Val(make([]string, int(s.InType('n').Num()))) }))
+	Default.Store("vector-ints", F(1, func(s *State) { s.Out = Val(make([]int, int(s.InType('n').Num()))) }))
+	Default.Store("vector-int64s", F(1, func(s *State) { s.Out = Val(make([]int64, int(s.InType('n').Num()))) }))
+	Default.Store("vector-len", F(1, func(s *State) { s.Out = Num(float64((reflect.ValueOf(s.In().Val()).Len()))) }))
+	Default.Store("vector-null?", F(1, func(s *State) { s.Out = Bln(reflect.ValueOf(s.In().Val()).Len() == 0) }))
+	Default.Store("vector-nth", F(2, func(s *State) {
 		rm := reflect.ValueOf(s.In().Val())
 		s.Out = Val(rm.Index(int(s.InType('n').Num())).Interface())
-	})
-	Default.Install("vector-set-nth!", 3, func(s *State) {
+	}))
+	Default.Store("vector-set-nth!", F(3, func(s *State) {
 		rm := reflect.ValueOf(s.In().Val())
 		rm.Index(int(s.InType('n').Num())).Set(s.In().TypedVal(rm.Type().Elem()))
-	})
-	Default.Install("vector-slice", 3, func(s *State) {
+	}))
+	Default.Store("vector-slice", F(3, func(s *State) {
 		rl := reflect.ValueOf(s.In().Val())
 		start, end := int(s.InType('n').Num()), int(s.InType('n').Num())
 		s.Out = Val(rl.Slice(start, end).Interface())
-	})
-	Default.Install("vector-concat", 2, func(s *State) {
+	}))
+	Default.Store("vector-concat", F(2, func(s *State) {
 		rv1, rv2 := reflect.ValueOf(s.In().Val()), reflect.ValueOf(s.In().Val())
 		s.assert(rv1.Type() == rv2.Type() || s.panic("vector-concat: different type"))
 		r := reflect.MakeSlice(rv1.Type(), rv1.Len(), rv1.Len()+rv2.Len())
 		reflect.Copy(r, rv1)
 		reflect.AppendSlice(r, rv2)
 		s.Out = Val(r.Interface())
-	})
-	Default.Install("vector-foreach", 2, func(s *State) {
+	}))
+	Default.Store("vector-foreach", F(2, func(s *State) {
 		rl, fn := reflect.ValueOf(s.In().Val()), s.InType('f')
 		for i := 0; i < rl.Len(); i++ {
 			flag, err := fn.Fun().Call(Num(float64(i)), Val(rl.Index(i).Interface()))
@@ -248,8 +248,8 @@ func init() {
 				break
 			}
 		}
-	})
-	Default.Install("map", 2, func(s *State) {
+	}))
+	Default.Store("map", F(2, func(s *State) {
 		fn, r, l, i := s.InType('f'), []Value{}, s.InType('l').Lst(), 0
 		l.Range(func(h Value) bool {
 			v, err := fn.Fun().Call(h)
@@ -259,8 +259,8 @@ func init() {
 			return true
 		})
 		s.Out = Lst(Empty, r...)
-	})
-	Default.Install("reduce", 3, func(s *State) {
+	}))
+	Default.Store("reduce", F(3, func(s *State) {
 		fn, left, l, i := s.InType('f'), s.In(), s.InType('l').Lst(), 0
 		var err error
 		l.Range(func(h Value) bool {
@@ -270,8 +270,8 @@ func init() {
 			return true
 		})
 		s.Out = left
-	})
-	Default.Install("reduce-right", 3, func(s *State) {
+	}))
+	Default.Store("reduce-right", F(3, func(s *State) {
 		fn, right, rl := s.InType('f'), s.In(), s.InType('l').Lst().ToSlice()
 		var err error
 		for i := len(rl) - 1; i >= 0; i-- {
@@ -279,7 +279,7 @@ func init() {
 			s.assert(err == nil || s.panic("reduce-right: error at element #%d: %v", i, err))
 		}
 		s.Out = right
-	})
+	}))
 	// 	Default.Install("cond", Macro|Vararg, func(s *State) {
 	// 		if len(s.Args) == 0 {
 	// 			s.Out = s.Caller.Make("true")
@@ -307,7 +307,7 @@ func init() {
 	// 	// 			s.Out = s.Out.(bool) && reflect.DeepEqual(a, s.Args[i])
 	// 	// 		}
 	// 	// 	})
-	Default.Install("struct-get", 1|Vararg, func(s *State) {
+	Default.Store("struct-get", F(1|Vararg, func(s *State) {
 		rv := reflect.ValueOf(s.In().Val())
 		s.Args.Range(func(v Value) bool {
 			if rv.Kind() == reflect.Ptr {
@@ -318,8 +318,8 @@ func init() {
 			return true
 		})
 		s.Out = Val(rv.Interface())
-	})
-	Default.Install("struct-set!", 2|Vararg, func(s *State) {
+	}))
+	Default.Store("struct-set!", F(2|Vararg, func(s *State) {
 		rv := reflect.ValueOf(s.In().Val())
 		v := s.In()
 		s.Args.Range(func(v Value) bool {
@@ -331,30 +331,30 @@ func init() {
 			return true
 		})
 		rv.Set(reflect.ValueOf(v.Val()))
-	})
-	Default.Install("^", Vararg, func(s *State) {
+	}))
+	Default.Store("^", F(Vararg, func(s *State) {
 		p := bytes.Buffer{}
 		s.Args.Range(func(v Value) bool { p.WriteString(v.Str()); return true })
 		s.Out = Str(p.String())
-	})
-	Default.Install("display", Vararg, func(s *State) { fmt.Fprintln(DefaultStdout, vlisttointerface(s.Args.ToSlice())...) })
-	Default.Install("newline", 0, func(s *State) { fmt.Fprintln(DefaultStdout) })
-	// Default.Install("printf", 1|Vararg, func(s *State) { fmt.Fprintf(DefaultStdout, s.In(0, 's').Str(), vlisttointerface(s.Args[1:])...) })
+	}))
+	Default.Store("display", F(Vararg, func(s *State) { fmt.Fprintln(DefaultStdout, vlisttointerface(s.Args.ToSlice())...) }))
+	Default.Store("newline", F(0, func(s *State) { fmt.Fprintln(DefaultStdout) }))
+	// Default.Store("printf",F( 1|Vararg, func(s *State) { fmt.Fprintf(DefaultStdout, s.In(0, 's').Str(), vlisttointerface(s.Args[1:])...) }))
 	// 	Default.Install("regex/match", 2, func(s *State) {
 	// 		s.Out = Bln(regexp.MustCompile(s.In(0, 's').Str()).MatchString(s.In(1, 's').Str()))
 	// 	})
 	// 	Default.Install("regex/find", 3, func(s *State) {
 	// 		s.Out = ValRec(regexp.MustCompile(s.In(0, 's').Str()).FindAllStringSubmatch(s.In(1, 's').Str(), int(s.In(2, 'n').Num())))
 	// 	})
-	Default.Install("json", 1, func(s *State) {
+	Default.Store("json", F(1, func(s *State) {
 		buf, err := json.MarshalIndent(s.In().Val(), "", "  ")
 		s.Out = ev2(string(buf), err)
-	})
-	Default.Install("json-c", 1, func(s *State) {
+	}))
+	Default.Store("json-c", F(1, func(s *State) {
 		buf, err := json.Marshal(s.In().Val())
 		s.Out = ev2(string(buf), err)
-	})
-	Default.Install("json-parse", 1, func(s *State) {
+	}))
+	Default.Store("json-parse", F(1, func(s *State) {
 		text := strings.TrimSpace(s.InType('s').Str())
 		if strings.HasPrefix(text, "{") {
 			m := map[string]interface{}{}
@@ -378,8 +378,8 @@ func init() {
 				s.Out = Val(m)
 			}
 		}
-	})
-	Default.Install("setf!", 2|Macro, func(s *State) {
+	}))
+	Default.Store("setf!", F(2|Macro, func(s *State) {
 		a, v := s.InType('y').Str(), s.In()
 		parts := strings.Split(a, ".")
 		s.assert(len(parts) > 1 || s.panic("too few fields to set"))
@@ -389,8 +389,8 @@ func init() {
 			setter = setter.append(_Qt(v.Make(parts[i])))
 		}
 		s.Out = setter.value()
-	})
-	Default.Install("getf", 1|Macro, func(s *State) {
+	}))
+	Default.Store("getf", F(1|Macro, func(s *State) {
 		a := s.InType('y').Str()
 		parts := strings.Split(a, ".")
 		s.assert(len(parts) > 1 || s.panic("too few fields to get"))
@@ -400,7 +400,7 @@ func init() {
 			setter = setter.append(_Qt(s.Caller.Make(parts[i])))
 		}
 		s.Out = setter.value()
-	})
+	}))
 	// 	Default.Install("write-file",
 	// 		"write data to file, 'json or 'j if needed",
 	// 		func(fn string, a interface{}, t OptAtom) error {
@@ -420,7 +420,7 @@ func init() {
 	// 		buf, err := ioutil.ReadFile(fn)
 	// 		return string(buf), err
 	// 	})
-	Default.Install("$", Macro|Vararg, func(s *State) {
+	Default.Store("$", F(Macro|Vararg, func(s *State) {
 		v := Lst(s.Args).String()
 		expr, err := parser.ParseExpr(v)
 		if err != nil {
@@ -472,7 +472,7 @@ func init() {
 			panic(fmt.Errorf("$: %T not supported", e))
 		}
 		s.Out = do(expr)
-	})
+	}))
 	//
 	// 	// SRFI-9
 	// 	type record struct {

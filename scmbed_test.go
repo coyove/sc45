@@ -22,11 +22,11 @@ func (d *dummy) M(v string, args ...string) string {
 
 func TestOne(t *testing.T) {
 	it := New()
-	it.Install("assert", 1, func(s *State) {
+	it.Store("assert", F(1, func(s *State) {
 		if s.In().IsFalse() {
 			panic(fmt.Errorf("assertion failed"))
 		}
-	})
+	}))
 	// 	it.Install("var/test", 1|Vararg, func(s *State) {
 	// 		v := s.In(0, 'n').Num()
 	// 		a := s.Args[1:]
@@ -39,7 +39,7 @@ func TestOne(t *testing.T) {
 	// 		}
 	// 	})
 	// 	// it.Install("callee", "", func(v int64) int64 { return v * 10 })
-	it.Install("test/struct-gen", 1, func(s *State) {
+	it.Store("test/struct-gen", F(1, func(s *State) {
 		if s.In().IsFalse() {
 			s.Out = Val((*dummy)(nil))
 			return
@@ -48,26 +48,26 @@ func TestOne(t *testing.T) {
 		d.V.V2 = true
 		s.Out = Val(d)
 		return
-	})
+	}))
 	it.InstallGo("make/vararg", func(v ...interface{}) []interface{} {
 		return v
 	})
-	it.Install("make/bytes", 1, func(s *State) {
+	it.Store("make/bytes", F(1, func(s *State) {
 		n := s.In().Val()
 		l := make([]byte, n.(int64))
 		for i := 0; i < len(l); i++ {
 			l[i] = byte(i) + 1
 		}
 		s.Out = Val(l)
-	})
-	it.Install("make/list", 1, func(s *State) {
+	}))
+	it.Store("make/list", F(1, func(s *State) {
 		l := make([]Value, int(s.InType('n').Num()))
 		for i := 0; i < len(l); i++ {
 			l[i] = Num(float64(i) + 1)
 		}
 		s.Out = Lst(Empty, l...)
-	})
-	it.Install("range", 2, func(s *State) {
+	}))
+	it.Store("range", F(2, func(s *State) {
 		m := s.InMap()
 		f := s.InType('f')
 		for k, v := range m {
@@ -78,7 +78,7 @@ func TestOne(t *testing.T) {
 				return
 			}
 		}
-	})
+	}))
 	assert := func(v string) {
 		r, err := it.Run(v)
 		if err != nil {
@@ -86,15 +86,23 @@ func TestOne(t *testing.T) {
 		}
 		log.Println(v, "===>", r)
 	}
-	it.Install("iff", 2|Macro, func(s *State) {
+	it.Store("iff", F(2|Macro, func(s *State) {
 		s.In()
 		s.Out = s.In()
-	})
+	}))
 
-	assert(`(match (list "1" 2) ()
-	(#:string '(<= _ 2)) (display "ok")
-	(*) (display "whaat?")`)
-	return
+	assert(`(let ((foo (lambda args (match args ()
+	(#:string '(<= _ 2)) "str,<=2"
+	(#:string '(> _ 2)) (+ "str,>2" (number->string _))
+	(#:number) "num"
+	(*) "whaat?")))) 
+
+		(assert (= (foo "aa" 1) "str,<=2"))
+		(assert (= (foo "bb" 3) "str,>23"))
+		(assert (= (foo 0) "num"))
+		(assert (= (foo) "whaat?"))
+		`)
+
 	assert("(assert (match (append () '(1 2)) () (1 2) #t)")
 	assert(`(define-macro let*-native-match (lambda L
 			(match L ()
