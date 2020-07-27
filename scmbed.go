@@ -19,6 +19,8 @@ var (
 	Default       = &Context{}
 	Vararg, Macro = 1 << 30, 1 << 29
 	Void, Empty   = Value{}, &Pair{_empty: true}
+	Types         = map[byte]string{'s': "string", 'y': "symbol", 'n': "number", 'l': "list", 'i': "any", 'q': "quote", 'f': "function", 'v': "void"}
+	TypesRev      = map[string]byte{"string": 's', "symbol": 'y', "number": 'n', "list": 'l', "any": 'i', "quote": 'q', "function": 'f', "void": 'v'}
 )
 
 type (
@@ -275,7 +277,7 @@ func (s *State) In() Value {
 
 func (s *State) InType(t byte) Value {
 	v := s.In()
-	s.assert(t == 0 || v.Type() == t || s.panic("invalid argument #%d, expect '%v', got %v", s.argsidx, string(t), v))
+	s.assert(t == 0 || v.Type() == t || s.panic("invalid argument #%d, expect %s, got %v", s.argsidx, Types[t], v))
 	return v
 }
 
@@ -431,7 +433,7 @@ TAIL_CALL:
 				}
 			}
 			m := &Context{parent: state.local, m: map[string]Value{}}
-			if source.Lst().match(pattern, false, symbolmap, m.m) {
+			if source.Lst().match(state, pattern, false, symbolmap, m.m) {
 				return __exec(c.Val, execState{curCaller: state.curCaller, local: m})
 			}
 			if c.HasNext() {
@@ -592,11 +594,18 @@ LOOP:
 				}
 			case '/': // #/char
 				s.Scan()
-				r, l := utf8.DecodeRuneInString(scanToDelim(s))
-				if l == 0 {
-					return Void, fmt.Errorf("invalid char")
+				switch n := scanToDelim(s); strings.ToLower(n) {
+				case "space", "newline", "return", "tab", "backspace", "alert", "form", "backslash":
+					comp = comp.append(Num(float64(map[string]rune{
+						"space": ' ', "newline": '\n', "return": '\r', "tab": '\t', "backspace": '\b', "alert": '\a', "form": '\f', "backslash": '\\',
+					}[strings.ToLower(n)])))
+				default:
+					r, l := utf8.DecodeRuneInString(n)
+					if l == 0 {
+						return Void, fmt.Errorf("invalid char")
+					}
+					comp = comp.append(Num(float64(r)))
 				}
-				comp = comp.append(Num(float64(r)))
 			case 't', 'f':
 				s.Scan()
 				comp = comp.append(Bln(pr == 't'))
@@ -604,7 +613,7 @@ LOOP:
 				s.Scan()
 				comp = comp.append(Void)
 			default:
-				comp = comp.append(Sym("#"+scanToDelim(s), (s.Pos().Line), (s.Pos().Column)))
+				comp = comp.append(Sym("#"+scanToDelim(s), s.Pos().Line, s.Pos().Column))
 			}
 		case ';':
 			for ; ; s.Scan() {
@@ -852,7 +861,7 @@ func (v Value) Val() interface{} {
 	switch v.Type() {
 	case 'n':
 		return v.Num()
-	case 's':
+	case 's', 'y':
 		return v.Str()
 	case 'l':
 		a := []interface{}{}
@@ -865,7 +874,7 @@ func (v Value) Val() interface{} {
 	case 'f':
 		return v.Fun()
 	default:
-		return v
+		return nil
 	}
 }
 
@@ -958,7 +967,7 @@ func (b listbuilder) append(v Value) listbuilder {
 }
 func (b listbuilder) value() Value { return Lst(b.L) }
 
-func (source *Pair) match(pattern *Pair, metWildcard bool, symbols map[string]struct{}, m map[string]Value) bool {
+func (source *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols map[string]struct{}, m map[string]Value) bool {
 	if pattern.Empty() && source.Empty() {
 		return true
 	}
@@ -986,39 +995,52 @@ func (source *Pair) match(pattern *Pair, metWildcard bool, symbols map[string]st
 	switch pattern.Val.Type() {
 	case 'y':
 		sym := pattern.Val.Str()
-		if sym != "_" {
-			if _, ok := symbols[sym]; ok {
-				if !pattern.Val.Equals(source.Val) {
+		if sym == "_" {
+			break
+		}
+		if _, ok := symbols[sym]; ok {
+			if !pattern.Val.Equals(source.Val) {
+				return false
+			}
+			break
+		}
+		if w := isWildcard(sym); w != "" {
+			if pattern.HasNext() {
+				n := source.Len() - pattern.Next.Len()
+				if n < 0 { // the remaining symbols in 'source' is less than 'pattern'
 					return false
 				}
-				break
-			}
-			if w := isWildcard(sym); w != "" {
-				if pattern.HasNext() {
-					n := source.Len() - pattern.Next.Len()
-					if n < 0 { // the remaining symbols in 'source' is less than 'pattern'
-						return false
-					}
-					// The first n symbols will go into 'ww'
-					ww := initlistbuilder()
-					for ; n > 0; n-- {
-						ww = ww.append(source.Val)
-						source = source.Next
-					}
-					m[w] = ww.value()
-					return source.match(pattern.Next, true, symbols, m)
+				// The first n symbols will go into 'ww'
+				ww := initlistbuilder()
+				for ; n > 0; n-- {
+					ww = ww.append(source.Val)
+					source = source.Next
 				}
-				m[w] = Lst(source)
-				return true
-			} else {
-				m[sym] = source.Val
+				m[w] = ww.value()
+				return source.match(state, pattern.Next, true, symbols, m)
 			}
+			m[w] = Lst(source)
+			return true
 		}
+		if strings.HasPrefix(sym, "#:") {
+			if x := TypesRev[sym[2:]]; x > 0 && source.Val.Type() != x {
+				return false
+			}
+			break
+		}
+		m[sym] = source.Val
 	case 'l':
+		if lst := pattern.Val.Lst(); lst.Val.Type() == 'y' && lst.Val.Str() == "quote" {
+			m := &Context{parent: state.local, m: map[string]Value{"_": source.Val}}
+			if __exec(lst.Next.Val, execState{curCaller: state.curCaller, local: m}).IsFalse() {
+				return false
+			}
+			break
+		}
 		if source.Val.Type() != 'l' {
 			return false
 		}
-		if !source.Val.Lst().match(pattern.Val.Lst(), false, symbols, m) {
+		if !source.Val.Lst().match(state, pattern.Val.Lst(), false, symbols, m) {
 			return false
 		}
 	default:
@@ -1026,7 +1048,7 @@ func (source *Pair) match(pattern *Pair, metWildcard bool, symbols map[string]st
 			return false
 		}
 	}
-	return source.Next.match(pattern.Next, false, symbols, m)
+	return source.Next.match(state, pattern.Next, false, symbols, m)
 }
 func (l *Pair) Take(n int) *Pair {
 	if n == 0 {

@@ -54,14 +54,14 @@ func (ctx *Context) InstallGo(name string, fn interface{}) {
 		ins := make([]reflect.Value, 0, rt.NumIn())
 		if rt.IsVariadic() {
 			for i := 0; i < rt.NumIn()-1; i++ {
-				ins = append(ins, s.In().GoTypedValue(rt.In(i)))
+				ins = append(ins, s.In().TypedVal(rt.In(i)))
 			}
 			for !s.Args.Empty() {
-				ins = append(ins, s.In().GoTypedValue(rt.In(rt.NumIn()-1).Elem()))
+				ins = append(ins, s.In().TypedVal(rt.In(rt.NumIn()-1).Elem()))
 			}
 		} else {
 			for i := 0; i < rt.NumIn(); i++ {
-				ins = append(ins, s.In().GoTypedValue(rt.In(i)))
+				ins = append(ins, s.In().TypedVal(rt.In(i)))
 			}
 		}
 		outs := rf.Call(ins)
@@ -224,7 +224,7 @@ func init() {
 	})
 	Default.Install("vector-set-nth!", 3, func(s *State) {
 		rm := reflect.ValueOf(s.In().Val())
-		rm.Index(int(s.InType('n').Num())).Set(s.In().GoTypedValue(rm.Type().Elem()))
+		rm.Index(int(s.InType('n').Num())).Set(s.In().TypedVal(rm.Type().Elem()))
 	})
 	Default.Install("vector-slice", 3, func(s *State) {
 		rl := reflect.ValueOf(s.In().Val())
@@ -617,13 +617,22 @@ func init() {
 	// 	})
 }
 
-func (v Value) GoTypedValue(t reflect.Type) reflect.Value {
-	if v.Type() == 'y' && t.Kind() == reflect.String {
-		return reflect.ValueOf(v.Str())
+func (v Value) TypedVal(t reflect.Type) reflect.Value {
+	if v.Type() == 'l' {
+		s := reflect.MakeSlice(t, 0, 0)
+		v.Lst().Range(func(v Value) bool { s = reflect.Append(s, v.TypedVal(t.Elem())); return true })
+		return s
 	}
 	vv := v.Val()
 	if vv == nil {
 		return reflect.Zero(t)
+	}
+	if si, ok := vv.([]interface{}); ok {
+		s := reflect.MakeSlice(t, 0, len(si))
+		for _, v := range si {
+			s = reflect.Append(s, reflect.ValueOf(v))
+		}
+		return s
 	}
 	rv := reflect.ValueOf(vv)
 	if v.Type() == 'n' {

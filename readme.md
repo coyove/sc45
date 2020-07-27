@@ -1,13 +1,8 @@
 Scmbed is a relatively-small-basically-working scheme dialect in Go, its core consists of only one file (scmbed.go) with no external dependencies.
 
-Scmbed serves one purpose: give your program an embedded REPL on-the-fly. 
+Scmbed serves one purpose: give your program an embedded REPL on-the-fly with minimal efforts:
 
-Let's say you want to debug a piece of online server code: turn on a flag, do some setups and collect logs, then turn on another flag and repeat the process until safisifed.
-This is usually not a tough task, but will introduce too much unnecessary efforts into your debugging process because you have to interact with a running program with complex logics.
-
-Having REPL will make things a lot easier:
 ```Go
-// During program initalization:
 func init() {
     it := scmbed.New()
     it.InstallGo("(turn-on-flag1 ...)", func(v bool) { FLAG1 = v })

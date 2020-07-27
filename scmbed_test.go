@@ -90,6 +90,11 @@ func TestOne(t *testing.T) {
 		s.In()
 		s.Out = s.In()
 	})
+
+	assert(`(match (list "1" 2) ()
+	(#:string '(<= _ 2)) (display "ok")
+	(*) (display "whaat?")`)
+	return
 	assert("(assert (match (append () '(1 2)) () (1 2) #t)")
 	assert(`(define-macro let*-native-match (lambda L
 			(match L ()
