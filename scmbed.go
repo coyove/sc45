@@ -3,6 +3,7 @@ package scmbed
 import (
 	"bytes"
 	"fmt"
+	"io/ioutil"
 	"math"
 	"os"
 	"reflect"
@@ -52,8 +53,9 @@ type (
 	}
 	Context struct {
 		assertable
-		parent *Context
-		m      map[string]Value
+		parent   *Context
+		m        map[string]Value
+		OnParsed func(string) Value
 	}
 	execState struct {
 		assertable
@@ -556,6 +558,14 @@ func (ctx *Context) Exec(c Value) (output Value, err error) {
 		}
 	}()
 	return __exec(c, execState{local: ctx, curCaller: &curCaller}), nil
+}
+
+func (ctx *Context) RunFile(path string) (result Value, err error) {
+	buf, err := ioutil.ReadFile(path)
+	if err != nil {
+		return Void, err
+	}
+	return ctx.Run(*(*string)(unsafe.Pointer(&buf)))
 }
 
 func (ctx *Context) Run(tmpl string) (result Value, err error) {
