@@ -80,10 +80,6 @@ func Fgo(fn interface{}) Value {
 }
 
 func init() {
-	Default.Store("define-token-parser", F(1, func(s *State) {
-		f := s.InType('f').Fun()
-		s.Context.OnParsed = func(k string) Value { v, _ := f.Call(Str(k)); return v }
-	}))
 	Default.Store("letrec", F(1|Vararg|Macro, func(s *State) {
 		/* Unwrap to:
 		(let ((var1 ()) ... (varn ())                  // outer binds

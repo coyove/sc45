@@ -22,9 +22,6 @@ func (d *dummy) M(v string, args ...string) string {
 
 func TestOne(t *testing.T) {
 	it := New()
-	t.Log(it.RunFile("s/raw_string.scm"))
-	return
-
 	assert := func(v string) {
 		r, err := it.Run(v)
 		if err != nil {

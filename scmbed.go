@@ -53,9 +53,8 @@ type (
 	}
 	Context struct {
 		assertable
-		parent   *Context
-		m        map[string]Value
-		OnParsed func(string) Value
+		parent *Context
+		m      map[string]Value
 	}
 	execState struct {
 		assertable
