@@ -11,7 +11,7 @@ import (
 	"unicode"
 )
 
-func (it *Context) RunSimplePipeREPL(path string) error {
+func (ctx *Context) RunSimplePipeREPL(path string) error {
 	os.Remove(path)
 	if err := syscall.Mkfifo(path, 0777); err != nil {
 		return err
@@ -23,7 +23,7 @@ func (it *Context) RunSimplePipeREPL(path string) error {
 	touch2() { mkdir -p "$(dirname "$1")" && touch "$1" ; }
 	`)
 
-	for name := range it.Unsafe() {
+	for name := range ctx.Unsafe() {
 		if len(name) == 0 || !unicode.IsLetter(rune(name[0])) {
 			continue
 		}
@@ -57,7 +57,7 @@ done
 		cmd := string(bytes.TrimSpace(tmp[:n]))
 
 		ww.Reset()
-		v, err := it.Run(cmd)
+		v, err := ctx.Run(cmd)
 
 		resp := bytes.Buffer{}
 		resp.WriteString("out > ")

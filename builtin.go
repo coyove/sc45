@@ -22,9 +22,9 @@ func (s *State) InMap() map[string]Value {
 	return v
 }
 
-func (m *Context) String() string {
+func (ctx *Context) String() string {
 	p := bytes.NewBufferString("{")
-	for k, v := range m.m {
+	for k, v := range ctx.m {
 		p.WriteString(strconv.Quote(k))
 		p.WriteString(":")
 		p.WriteString(v.String())
@@ -34,9 +34,9 @@ func (m *Context) String() string {
 		p.Truncate(p.Len() - 1)
 	}
 	p.WriteString("}")
-	if m.parent != nil {
+	if ctx.parent != nil {
 		p.WriteString(" -> ")
-		p.WriteString(m.parent.String())
+		p.WriteString(ctx.parent.String())
 	}
 	return p.String()
 }
@@ -94,11 +94,11 @@ func init() {
 		s.InType('l').Lst().Range(func(v Value) bool {
 			s.assert(v.Type() == 'l' || s.panic("invalid binding list format: %v", v))
 			b := v.Lst()
-			s.assert(b.HasNext() && b.Val.Type() == 'y' && b.Val.Str() != "" || s.panic("invalid binding list format: %v", v))
-			tmpvar := Sym(b.Val.Str()+"tmp", 0, 0)
-			innersets = append(innersets, Lst(Empty, setq, b.Val, tmpvar))
-			innerbinds = append(innerbinds, Lst(Empty, tmpvar, b.Next.Val))
-			outerbinds = append(outerbinds, Lst(Empty, b.Val, Void))
+			s.assert(b.HasNext() && b.Val().Type() == 'y' && b.Val().Str() != "" || s.panic("invalid binding list format: %v", v))
+			tmpvar := Sym(b.Val().Str()+"tmp", 0, 0)
+			innersets = append(innersets, Lst(Empty, setq, b.Val(), tmpvar))
+			innerbinds = append(innerbinds, Lst(Empty, tmpvar, b.Next().Val()))
+			outerbinds = append(outerbinds, Lst(Empty, b.Val(), Void))
 			return true
 		})
 		inner := Lst(Lst(s.Args, innersets...).Lst(), let, Lst(Empty, innerbinds...))
@@ -118,7 +118,7 @@ func init() {
 			bd := binds[i]
 			s.assert(bd.Type() == 'l' || s.panic("invalid binding list format: %v", bd))
 			lst := bd.Lst()
-			s.assert(lst.HasNext() && lst.Val.Type() == 'y' && lst.Val.Str() != "" || s.panic("invalid binding list format: %v", bd))
+			s.assert(lst.HasNext() && lst.Val().Type() == 'y' && lst.Val().Str() != "" || s.panic("invalid binding list format: %v", bd))
 			last = Lst(Empty, let, Lst(Empty, bd), last)
 		}
 		s.Out = last

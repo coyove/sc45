@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-func (it *Context) InjectDebugPProfREPL(title string) {
+func (ctx *Context) InjectDebugPProfREPL(title string) {
 	type respStruct struct {
 		Result string
 		Stdout string
@@ -81,7 +81,7 @@ function post(url, data, cb) {
 
 		if r.FormValue("all") != "" {
 			keys := []map[string]string{}
-			for k := range it.Unsafe() {
+			for k := range ctx.Unsafe() {
 				keys = append(keys, map[string]string{"key": k, "doc": k})
 			}
 			buf, _ := json.Marshal(keys)
@@ -92,7 +92,7 @@ function post(url, data, cb) {
 		cmd := r.FormValue("cmd")
 
 		ww.Reset()
-		v, err := it.Run(cmd)
+		v, err := ctx.Run(cmd)
 
 		var resp = respStruct{
 			Stdout: ww.String(),

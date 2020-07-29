@@ -71,13 +71,13 @@ func (v Value) marshal(p *bytes.Buffer) {
 		p.WriteByte('l')
 		vl := v.Lst()
 		for vl != nil && !vl._empty {
-			if vl.Next == nil {
+			if vl.Next() == nil {
 				p.WriteByte(0)
 			} else {
 				p.WriteByte(1)
 			}
-			vl.Val.marshal(p)
-			vl = vl.Next
+			vl.Val().marshal(p)
+			vl = vl.Next()
 		}
 		p.WriteByte('L')
 	case 'b':
@@ -134,7 +134,7 @@ func (v *Value) unmarshal(p interface {
 				vl = vl.append(v2)
 			case 0:
 				v2.unmarshal(p)
-				vl.p.Val, vl.p._empty = v2, false
+				vl.p.SetVal(v2)._empty = false
 				break LOOP
 			case 'L':
 				break LOOP

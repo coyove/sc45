@@ -121,12 +121,12 @@ func TestOne(t *testing.T) {
 		`)
 
 	assert("(assert (match (append () '(1 2)) () (1 2) #t)")
-	assert(`(define-macro let*-native-match (lambda L
+	assert(`(define let*-native-match (lambda-syntax L
 			(match L ()
 				( (b* (s v)) body ) (quasiquote (let*-native-match ,b (let ((,s ,v)) ,body)))
 				( () body ) body
 		)`)
-	assert(`(define-macro or# (lambda args
+	assert(`(define or# (lambda-syntax args
 	 	 		(match args ()
 					() '#f
 					(a) a
@@ -146,7 +146,7 @@ func TestOne(t *testing.T) {
 	assert(`(define Fib (lambda (v) (if (< v 2) v (+ (Fib (- v 1)) (Fib (- v 2)))))) (assert (= 21 (Fib 8) `)
 	// assert(`(Fib 35) `)
 	// 	assert("(eval (unwrap-macro (list 'define `(madd2 a ,(string->symbol \"b\")) (list 'let `[(c ,(cons '+ (cons 'a (cons 'b [] ))) )] '(* (let ((a a)) a) b c))")
-	assert(`(define-macro let*-native (lambda (bindings . body)
+	assert(`(define let*-native (lambda-syntax (bindings . body)
 	 		(set! body (cons 'begin body))
 	 		(letrec ((work (lambda (lst)
 	 			(if (not (null? lst)) (begin
@@ -258,7 +258,7 @@ func TestOne(t *testing.T) {
 	 	 (define (set-nth! list n v)
 	 	 	(set-car! (nth-cdr list n) v))
 	
-	 	 (define-macro defun (lambda (name paramlist body)
+	 	 (define defun (lambda-syntax (name paramlist body)
 	 	 	(quasiquote (define ,name (lambda ,paramlist ,body))
 	 	 	`)
 	assert(`(defun a (a . r) (* a (length r))) (defun b(a . r) (* a (length r))) (assert (= 10 (a 5 "a" ())))
