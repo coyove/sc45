@@ -23,7 +23,19 @@ func (d *dummy) M(v string, args ...string) string {
 func TestOne(t *testing.T) {
 	it := New()
 	assert := func(v string) {
-		r, err := it.Run(v)
+		c, err := it.Parse(v)
+		if err != nil {
+			t.Fatal(v, err)
+		}
+
+		// buf, err := c.Marshal()
+		// panicerr(err)
+
+		// var c2 Value
+		// panicerr(c2.Unmarshal(buf))
+		// fmt.Println(c2)
+
+		r, err := it.Exec(c)
 		if err != nil {
 			t.Fatal(v, err)
 		}

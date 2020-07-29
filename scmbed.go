@@ -19,9 +19,10 @@ import (
 var (
 	Default       = &Context{}
 	Vararg, Macro = 1 << 30, 1 << 29
-	Void, Empty   = Value{}, &Pair{_empty: true}
-	Types         = map[byte]string{'s': "string", 'y': "symbol", 'n': "number", 'l': "list", 'i': "any", 'q': "quote", 'f': "function", 'v': "void"}
-	TypesRev      = map[string]byte{"string": 's', "symbol": 'y', "number": 'n', "list": 'l', "any": 'i', "quote": 'q', "function": 'f', "void": 'v'}
+	Void, Quote   = Value{}, Sym("quote", 0, 0)
+	Empty         = &Pair{_empty: true}
+	Types         = map[byte]string{'s': "string", 'y': "symbol", 'n': "number", 'l': "list", 'i': "any", 'f': "function", 'v': "void"}
+	TypesRev      = map[string]byte{"string": 's', "symbol": 'y', "number": 'n', "list": 'l', "any": 'i', "function": 'f', "void": 'v'}
 )
 
 type (
@@ -214,7 +215,7 @@ func init() {
 				}
 			}
 		}()
-		s.Out = __exec(Lst(Empty, _Qt(s.In())), execState{curCaller: &s.Out, local: s.Context})
+		s.Out = __exec(Lst(Empty, s.In().Quote()), execState{curCaller: &s.Caller, local: s.Context})
 	})).Store("apply", F(2, func(s *State) {
 		v, err := s.InType('f').Fun().Call(s.InType('l').Lst().ToSlice()...)
 		s.assert(err == nil || s.panic("apply panic: %v", err))
@@ -244,9 +245,9 @@ func F(minArgsFlag int, f func(*State)) Value {
 
 func (f *Func) Call(a ...Value) (Value, error) {
 	expr := make([]Value, len(a)+1)
-	expr[0] = _Qt(Fun(f))
+	expr[0] = Fun(f).Quote()
 	for i := range a {
-		expr[i+1] = _Qt(a[i])
+		expr[i+1] = a[i].Quote()
 	}
 	return ((*Context)(nil)).Exec(Lst(Empty, expr...))
 }
@@ -352,8 +353,6 @@ func __exec(expr Value, state execState) Value {
 
 TAIL_CALL:
 	switch expr.Type() {
-	case 'q':
-		return expr._Qt()
 	case 'y':
 		v, ok := state.local.Load(expr.Str())
 		state.assert(ok || state.panic("unbound %v", expr))
@@ -701,7 +700,7 @@ func (ctx *Context) unwrapMacro(v Value, quasi bool) Value {
 			if m, _ := ctx.Load(head.Str()); m.Type() == 'f' && m.Fun().macro {
 				args := initlistbuilder().append(head)
 				for comp.MoveNext(&comp); !comp.Empty(); comp.MoveNext(&comp) {
-					args = args.append(_Qt(ctx.unwrapMacro(comp.Val, false)))
+					args = args.append(ctx.unwrapMacro(comp.Val, false).Quote())
 				}
 				v, err := ctx.Exec(args.value())
 				if err != nil {
@@ -801,12 +800,18 @@ func Num(v float64) Value {
 func NumStr(v float64, o string) Value { n := Num(v); n.ptr = unsafe.Pointer(&o); return n }
 func Str(v string) (vs Value)          { return Value{val: 's', ptr: unsafe.Pointer(&v)} }
 func Fun(f *Func) Value                { return Value{val: 'f', ptr: unsafe.Pointer(f)} }
-func _Qt(v Value) Value                { return Value{val: 'q', ptr: unsafe.Pointer(&v)} } // internal use
 
 //go:nosplit
 func (v *Value) _itfptr() *interface{} { return (*interface{})(unsafe.Pointer(v)) }
 func (v Value) IsVoid() bool           { return v == Value{} }
 func (v Value) IsFalse() bool          { return v.val < 2 } // 0: void, 1: false
+
+func (v Value) Quote() Value {
+	if t := v.Type(); t == 'l' || t == 'y' {
+		return Lst(&Pair{Val: Quote, Next: &Pair{Val: v, Next: Empty}})
+	}
+	return v
+}
 
 // Type returns the type of Value: 'b'ool, 'n'umber, 'l'ist, 's'tring, 'f'unc, s'y'mbol, 'i'nterface, 'v'oid
 func (v Value) Type() byte {
@@ -819,14 +824,12 @@ func (v Value) Type() byte {
 		if v.val >= 1<<51 {
 			return ifbyte(v.val < 1<<52-1, 'y', 'n')
 		}
-		return ifbyte(v == (Value{}), 'v', 'i')
+		return ifbyte(v == Void, 'v', 'i')
 	}
 }
 
 func (v Value) String() string {
 	switch v.Type() {
-	case 'q':
-		return "'" + v._Qt().String()
 	case 'n':
 		return strconv.FormatFloat(v.Num(), 'f', -1, 64)
 	case 's':
@@ -870,7 +873,7 @@ func (v Value) Val() interface{} {
 	case 's', 'y':
 		return v.Str()
 	case 'l':
-		a := []interface{}{}
+		var a []interface{}
 		v.Lst().Range(func(v Value) bool { a = append(a, v.Val()); return true })
 		return a
 	case 'b':
@@ -915,7 +918,6 @@ func (v Value) Num() float64    { return math.Float64frombits(^v.val) }
 func (v Value) Str() string     { return *(*string)(v.ptr) }
 func (v Value) Pos() (int, int) { return int((v.val >> 24) & 0xffffff), int(v.val & 0xffffff) }
 func (v Value) Lst() *Pair      { return (*Pair)(v.ptr) }
-func (v Value) _Qt() Value      { return *(*Value)(v.ptr) }
 
 func (l *Pair) Empty() bool {
 	if r := l.testEmpty(); r == 'i' {

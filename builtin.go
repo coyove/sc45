@@ -387,7 +387,7 @@ func init() {
 		structname := parts[0]
 		setter := initlistbuilder().append(v.Make("struct-set!")).append(v.Make(structname)).append(v)
 		for i := 1; i < len(parts); i++ {
-			setter = setter.append(_Qt(v.Make(parts[i])))
+			setter = setter.append(v.Make(parts[i]).Quote())
 		}
 		s.Out = setter.value()
 	}))
@@ -398,7 +398,7 @@ func init() {
 		structname := parts[0]
 		setter := initlistbuilder().append(s.Caller.Make("struct-get")).append(s.Caller.Make(structname))
 		for i := 1; i < len(parts); i++ {
-			setter = setter.append(_Qt(s.Caller.Make(parts[i])))
+			setter = setter.append(s.Caller.Make(parts[i]).Quote())
 		}
 		s.Out = setter.value()
 	}))
