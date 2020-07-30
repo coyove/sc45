@@ -157,6 +157,9 @@ func init() {
 		}
 		s.Out = ret.value()
 	}))
+	Default.Store("substring?", F(2, func(s *State) {
+		s.Out = Bln(strings.Contains(s.InType('s').Str(), s.InType('s').Str()))
+	}))
 	// 	Default.Install("skip", 2, func(s *State) {
 	// 		l := s.In(1, 'l').Lst()
 	// 		for i := 0; i < int(s.In(0, 'n').Num()); i++ {

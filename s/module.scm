@@ -1,0 +1,2 @@
+(lambda (d) 
+(raise d))

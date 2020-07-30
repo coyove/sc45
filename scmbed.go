@@ -36,13 +36,15 @@ type (
 		_empty bool
 	}
 	Func struct {
-		macro bool         // is macro
-		varg  bool         // is variadic
-		f     func(*State) // builtin function
-		fargs int          // builtin: (minimal) arguments required
-		n     Value        // native function
-		nargs []string     // native: arguments binding list
-		cls   *Context     // native: closure
+		macro         bool         // is macro
+		fvar          bool         // builtin is variadic
+		f             func(*State) // builtin function
+		fvars         int          // builtin: (minimal) arguments required
+		n             Value        // native function
+		nargs         []string     // native: arguments binding list
+		nvar_or_fname string       // native: vararg name, builtin: last assigned name
+		cls           *Context     // native: closure
+		location      string
 	}
 	State struct {
 		*Context
@@ -57,11 +59,16 @@ type (
 		parent *Context
 		m      map[string]Value
 	}
+	callerInfo struct {
+		v   *Value
+		loc *string
+	}
 	execState struct {
 		assertable
-		curCaller *Value
+		curCaller callerInfo
 		local     *Context
 		quasi     bool
+		macroMode bool
 	}
 	assertable struct{ err error }
 )
@@ -165,7 +172,17 @@ func init() {
 	})).Store("eval", F(1, func(s *State) {
 		s.Out = ev2(s.Context.Exec(s.In()))
 	})).Store("parse", F(1, func(s *State) {
-		s.Out = ev2(s.Context.Parse(s.InType('s').Str()))
+		x := s.InType('s').Str()
+		if _, err := os.Stat(x); err == nil {
+			buf, err := ioutil.ReadFile(x)
+			if err != nil {
+				s.Out = Val(err)
+			} else {
+				s.Out = ev2(s.Context.Parse(x, *(*string)(unsafe.Pointer(&buf))))
+			}
+		} else {
+			s.Out = ev2(s.Context.Parse("(parse)", x))
+		}
 	})).Store("set-car!", F(2, func(s *State) {
 		l := s.InType('l').Lst()
 		s.assert(!l.Empty() || s.panic("set-car!: empty list"))
@@ -179,13 +196,7 @@ func init() {
 	})).Store("append", F(2, func(s *State) {
 		s.Out = Lst(s.InType('l').Lst().Append(s.InType('l').Lst()))
 	})).Store("cons", F(2, func(s *State) {
-		p := (&Pair{}).SetVal(s.In())
-		if s.In().Type() == 'l' {
-			p.SetNext(s.LastIn().Lst())
-		} else {
-			p.SetNext((&Pair{}).SetVal(s.LastIn()))
-		}
-		s.Out = Lst(p)
+		s.Out = Lst(Cons(s.In(), s.In()))
 	})).Store("car", F(1, func(s *State) {
 		l := s.InType('l').Lst()
 		s.assert(!l.Empty() || s.panic("car: empty list"))
@@ -215,9 +226,11 @@ func init() {
 				}
 			}
 		}()
-		s.Out = __exec(Lst(Empty, s.In().Quote()), execState{curCaller: &s.Caller, local: s.Context})
+		s.Out = __exec(Lst(Empty, s.In().Quote()), execState{curCaller: callerInfo{&Value{}, new(string)}, local: s.Context})
 	})).Store("apply", F(2, func(s *State) {
-		v, err := s.InType('f').Fun().Call(s.InType('l').Lst().ToSlice()...)
+		expr := initlistbuilder().append(s.InType('f').Quote())
+		s.InType('l').Lst().Range(func(v Value) bool { expr = expr.append(v.Quote()); return true })
+		v, err := (*Context)(nil).Exec(expr.value())
 		s.assert(err == nil || s.panic("apply panic: %v", err))
 		s.Out = v
 	})).
@@ -227,21 +240,17 @@ func init() {
 		Store("number->string", F(1, func(s *State) { s.Out = Str(strconv.FormatFloat(s.InType('n').Num(), 'f', -1, 64)) })).
 		Store("string->symbol", F(1, func(s *State) { s.Out = Sym(s.InType('s').Str(), 0, 0) })).
 		Store("string->error", F(1, func(s *State) { s.Out = Val(fmt.Errorf(s.InType('s').Str())) })).
-		Store("null?", F(1, func(s *State) { s.Out = Bln(s.In().Type() == 'l' && s.LastIn().Lst().Empty()) })).
 		Store("error?", F(1, func(s *State) { _, ok := s.In().Val().(error); s.Out = Bln(ok) })).
-		Store("void?", F(1, func(s *State) { s.Out = Bln(s.In() == Void) })).
+		Store("null?", F(1, func(s *State) { s.Out = Bln(s.In().Type() == 'l' && s.LastIn().Lst().Empty()) })).
 		Store("list?", F(1, func(s *State) { s.Out = Bln(s.In().Type() == 'l' && s.LastIn().Lst().Proper()) })).
-		Store("pair?", F(1, func(s *State) { s.Out = Bln(s.In().Type() == 'l') })).
-		Store("symbol?", F(1, func(s *State) { s.Out = Bln(s.In().Type() == 'y') })).
-		Store("bool?", F(1, func(s *State) { s.Out = Bln(s.In().Type() == 'b') })).
-		Store("number?", F(1, func(s *State) { s.Out = Bln(s.In().Type() == 'n') })).
-		Store("string?", F(1, func(s *State) { s.Out = Bln(s.In().Type() == 's') })).
+		Store("void?", F(1, func(s *State) { s.Out = Bln(s.In() == Void) })).Store("pair?", _Ft('l')).Store("symbol?", _Ft('y')).Store("boolean?", _Ft('b')).Store("number?", _Ft('n')).Store("string?", _Ft('s')).
 		Store("stringify", F(1, func(s *State) { s.Out = Str(s.In().String()) }))
 }
 
 func F(minArgsFlag int, f func(*State)) Value {
-	return Fun(&Func{f: f, fargs: minArgsFlag & 0xffff, varg: minArgsFlag&Vararg != 0, macro: minArgsFlag&Macro != 0})
+	return Fun(&Func{f: f, fvars: minArgsFlag & 0xffff, fvar: minArgsFlag&Vararg != 0, macro: minArgsFlag&Macro != 0})
 }
+func _Ft(t byte) Value { return F(1, func(s *State) { s.Out = Bln(s.In().Type() == t) }) }
 
 func (f *Func) Call(a ...Value) (Value, error) {
 	expr := initlistbuilder().append(Fun(f).Quote())
@@ -252,16 +261,10 @@ func (f *Func) Call(a ...Value) (Value, error) {
 }
 
 func (f *Func) String() string {
-	switch {
-	case f.n == Void:
-		return "#" + ifstr(f.varg, "variadic-", "") + ifstr(f.macro, "builtin-macro-", "builtin-function-") + strconv.Itoa(f.fargs)
-	case f.varg && len(f.nargs) == 1:
-		return ifstr(f.macro, "(lambda-syntax ", "(lambda ") + f.nargs[0] + " " + f.n.String() + ")"
-	case f.varg:
-		return ifstr(f.macro, "(lambda-syntax (", "(lambda (") + strings.Join(f.nargs[:len(f.nargs)-1], " ") + " . " + f.nargs[len(f.nargs)-1] + ") " + f.n.String() + ")"
-	default:
-		return ifstr(f.macro, "(lambda-syntax (", "(lambda (") + strings.Join(f.nargs, " ") + ") " + f.n.String() + ")"
+	if f.n == Void {
+		return ifstr(f.nvar_or_fname == "#v", "/*missing native code*/", f.nvar_or_fname+" /*native code*/")
 	}
+	return ifstr(f.macro, "(lambda-syntax (", "(lambda (") + strings.Join(f.nargs, " ") + ifstr(f.nvar_or_fname != "", " . "+f.nvar_or_fname, "") + ") " + f.n.String() + ")"
 }
 
 // In pops an argument
@@ -298,6 +301,9 @@ func (ctx *Context) set(k string, v Value) {
 }
 
 func (ctx *Context) Store(k string, v Value) *Context {
+	if v.Type() == 'f' && v.Fun().n == Void {
+		v.Fun().nvar_or_fname = k
+	}
 	if _, mv := ctx.find(k); mv == nil {
 		ctx.set(k, v)
 	} else {
@@ -367,8 +373,8 @@ TAIL_CALL:
 	}
 
 	head := c.Val()
-	if *state.curCaller = c.Val(); state.curCaller.Type() == 'y' {
-		switch va := state.curCaller.Str(); va {
+	if *state.curCaller.v = c.Val(); state.curCaller.v.Type() == 'y' {
+		switch va := state.curCaller.v.Str(); va {
 		case "if":
 			state.assert(c.MoveNext(&c) || state.panic("invalid if syntax, missing condition"))
 			if !__exec(c.Val(), state).IsFalse() {
@@ -388,16 +394,16 @@ TAIL_CALL:
 			return Void
 		case "lambda", "lambda-syntax":
 			state.assert(c.MoveNext(&c) || state.panic("invalid lambda* syntax, missing parameters"))
-			f := &Func{cls: state.local, macro: va != "lambda"}
+			f := &Func{cls: state.local, macro: va != "lambda", location: *state.curCaller.loc}
 			switch c.Val().Type() {
 			case 'y': // (lambda* args body)
-				f.nargs, f.varg = []string{c.Val().Str()}, true
+				f.nvar_or_fname = c.Val().Str()
 			case 'l': // (lambda* (a1 a2 ... an) body)
 				for bindings := c.Val().Lst(); bindings != nil; bindings = bindings.Next() {
 					switch bindings.testEmpty() {
 					case 'i':
-						f.varg = true
-						fallthrough
+						state.assert(bindings.Val().Type() == 'y' || state.panic("invalid parameter, expect valid symbol"))
+						f.nvar_or_fname = bindings.Val().Str()
 					case 'f':
 						state.assert(bindings.Val().Type() == 'y' || state.panic("invalid parameter, expect valid symbol"))
 						f.nargs = append(f.nargs, bindings.Val().Str())
@@ -408,7 +414,7 @@ TAIL_CALL:
 			}
 			state.assert(c.MoveNext(&c) || state.panic("invalid lambda syntax, missing lambda body"))
 			if f.n = c.Val(); c.HasNext() {
-				f.n = Lst(c, state.curCaller.Make("if"), Void, Void)
+				f.n = Lst(c, state.curCaller.v.Make("if"), Void, Void)
 			}
 			return Fun(f)
 		case "match":
@@ -479,18 +485,20 @@ TAIL_CALL:
 	cc := fn.Fun()
 
 	if cc.f == nil {
+		if cc.macro && !state.macroMode {
+			return __exec(state.local.unwrapMacro(expr, false), state)
+		}
 		m := &Context{parent: cc.cls}
 		for i, name := range cc.nargs {
-			if cc.varg && i == len(cc.nargs)-1 {
-				values := initlistbuilder()
-				c.Next().Range(func(v Value) bool { values = values.append(__exec(v, state)); return true })
-				m.set(name, values.value())
-				break
-			}
 			state.assert(c.MoveNext(&c) || state.panic("too few arguments, expect at least %d", i+1))
 			m.set(name, __exec(c.Val(), state))
 		}
-		*state.curCaller, state.local, expr = head, m, cc.n
+		if cc.nvar_or_fname != "" {
+			values := initlistbuilder()
+			c.Next().Range(func(v Value) bool { values = values.append(__exec(v, state)); return true })
+			m.set(cc.nvar_or_fname, values.value())
+		}
+		*state.curCaller.v, *state.curCaller.loc, state.local, expr = head, cc.location, m, cc.n
 		goto TAIL_CALL
 	}
 
@@ -498,53 +506,57 @@ TAIL_CALL:
 	args := initlistbuilder()
 	c.Next().Range(func(v Value) bool { args = args.append(__exec(v, state)); return true })
 
-	*state.curCaller = head
-	state.assert(args.count == cc.fargs || (cc.varg && args.count >= cc.fargs) ||
-		state.panic("call: expect "+ifstr(cc.varg, "at least ", "")+strconv.Itoa(cc.fargs)+" arguments"))
+	*state.curCaller.v = head
+	state.assert(args.count == cc.fvars || (cc.fvar && args.count >= cc.fvars) ||
+		state.panic("call: expect "+ifstr(cc.fvar, "at least ", "")+strconv.Itoa(cc.fvars)+" arguments"))
 
 	s.Args = args.L
 	cc.f(&s)
 	return s.Out
 }
 
-func (ctx *Context) Parse(text string) (expr Value, err error) {
-	var s scanner.Scanner
-	s.Init(strings.NewReader(text))
+func (ctx *Context) Parse(filename, text string) (expr Value, err error) {
+	s := (&scanner.Scanner{}).Init(strings.NewReader(text))
 	s.Mode &^= scanner.ScanChars | scanner.ScanRawStrings
 	s.Error = func(s *scanner.Scanner, msg string) {
 		pos := s.Position
 		if !pos.IsValid() {
 			pos = s.Pos()
 		}
-		err = fmt.Errorf("parse: %s at %d:%d", msg, pos.Line, pos.Column)
+		err = fmt.Errorf("parse: %s at %s:%d:%d", msg, filename, pos.Line, pos.Column)
 	}
-	v, perr := ctx.scan(&s, false)
-	if perr != nil {
-		return Void, fmt.Errorf("parse: %v at %d:%d", perr, s.Pos().Line, s.Pos().Column)
-	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("parse: %v at %s:%d:%d", r, filename, s.Pos().Line, s.Pos().Column)
+		}
+	}()
+	v := ctx.scan(s, false)
 	if err != nil {
 		return Void, err
 	}
+
+	v = ctx.unwrapMacro(v, false)
 	if v.Type() == 'l' {
 		v = Lst(v.Lst(), Sym("if", 0, 0), Void, Void)
 	} else {
 		v = Lst(Empty, Sym("if", 0, 0), Void, Void, v)
 	}
-	// log.Println(v)
-	return ctx.UnwrapMacro(v)
+	v = Fun(&Func{n: v, cls: ctx, location: filename})
+	return Lst(Empty, v), nil
 }
 
 func (ctx *Context) Exec(c Value) (output Value, err error) {
 	var curCaller Value
+	var curLoc string
 	defer func() {
 		if r := recover(); r != nil {
 			if os.Getenv("SBD_STACK") != "" {
 				fmt.Println(string(debug.Stack()))
 			}
-			err = fmt.Errorf("%v at %v", r, curCaller)
+			err = fmt.Errorf("%v at %v (%s)", r, curCaller, curLoc)
 		}
 	}()
-	return __exec(c, execState{local: ctx, curCaller: &curCaller}), nil
+	return __exec(c, execState{local: ctx, curCaller: callerInfo{&curCaller, &curLoc}}), nil
 }
 
 func (ctx *Context) RunFile(path string) (result Value, err error) {
@@ -552,18 +564,22 @@ func (ctx *Context) RunFile(path string) (result Value, err error) {
 	if err != nil {
 		return Void, err
 	}
-	return ctx.Run(*(*string)(unsafe.Pointer(&buf)))
-}
-
-func (ctx *Context) Run(tmpl string) (result Value, err error) {
-	c, err := ctx.Parse(tmpl)
+	c, err := ctx.Parse(path, *(*string)(unsafe.Pointer(&buf)))
 	if err != nil {
 		return Void, err
 	}
 	return ctx.Exec(c)
 }
 
-func (ctx *Context) scan(s *scanner.Scanner, scanOne bool) (Value, error) {
+func (ctx *Context) Run(tmpl string) (result Value, err error) {
+	c, err := ctx.Parse("(memory)", tmpl)
+	if err != nil {
+		return Void, err
+	}
+	return ctx.Exec(c)
+}
+
+func (ctx *Context) scan(s *scanner.Scanner, scanOne bool) Value {
 	comp := initlistbuilder()
 LOOP:
 	for tok := s.Scan(); tok != scanner.EOF; tok = s.Scan() {
@@ -571,17 +587,15 @@ LOOP:
 		switch tok {
 		case scanner.String, scanner.RawString:
 			t, err := strconv.Unquote(s.TokenText())
-			if err != nil {
-				return Value{}, err
-			}
+			ctx.assert(err == nil || ctx.panic("invalid string: %q", s.TokenText()))
 			comp = comp.append(Str(t))
 		case '#':
 			switch pr := s.Peek(); pr {
 			case '|': // #| comment |#
 				for s.Scan(); ; {
-					if current, next := s.Scan(), s.Peek(); current == scanner.EOF {
-						return Void, fmt.Errorf("incomplete comment block")
-					} else if current == '|' && next == '#' {
+					current, next := s.Scan(), s.Peek()
+					ctx.assert(current != scanner.EOF || ctx.panic("incomplete comment block"))
+					if current == '|' && next == '#' {
 						s.Scan()
 						break
 					}
@@ -595,9 +609,7 @@ LOOP:
 					}[strings.ToLower(n)])))
 				default:
 					r, l := utf8.DecodeRuneInString(n)
-					if l == 0 {
-						return Void, fmt.Errorf("invalid char")
-					}
+					ctx.assert(l != 0 || ctx.panic("invalid char: %q", n))
 					comp = comp.append(Num(float64(r)))
 				}
 			case 't', 'f':
@@ -616,31 +628,22 @@ LOOP:
 				}
 			}
 		case '(', '[':
-			c, err := ctx.scan(s, false)
-			if err != nil {
-				return Value{}, err
-			}
-			comp = comp.append(c)
+			comp = comp.append(ctx.scan(s, false))
 		case ')', ']':
 			break LOOP
 		case '.':
-			c, err := ctx.scan(s, true)
-			if err != nil {
-				return Void, err
+			c := ctx.scan(s, true)
+			if c.Type() == 'l' {
+				*comp.p = *c.Lst()
+			} else {
+				comp.p.SetVal(c)._empty = false
 			}
-			comp.p.SetVal(c)._empty = false
-			if s := s.Scan(); s != scanner.EOF && s != ']' && s != ')' {
-				return Void, fmt.Errorf("invalid dot syntax")
-			}
-			return comp.value(), nil
+			s := s.Scan()
+			ctx.assert(s == scanner.EOF || s == ']' || s == ')' || ctx.panic("invalid dot syntax"))
+			return comp.value()
 		case '\'', '`', ',':
-			c, err := ctx.scan(s, true)
-			if err != nil {
-				return Void, err
-			}
-			if c == Void {
-				return Void, fmt.Errorf("invalid *quote syntax")
-			}
+			c := ctx.scan(s, true)
+			ctx.assert(c != Void || ctx.panic("invalid *quote syntax"))
 			comp = comp.append(Lst(Empty, Sym(ifstr(tok == '\'', "quote", ifstr(tok == '`', "quasiquote", "unquote")), 0, 0), c))
 		default:
 			text := s.TokenText() + scanToDelim(s)
@@ -653,23 +656,14 @@ LOOP:
 			}
 		}
 		if scanOne && comp.count >= 1 {
-			return comp.L.Val(), nil
+			return comp.L.Val()
 		}
 	}
-	return comp.value(), nil
-}
-
-func (ctx *Context) UnwrapMacro(v Value) (result Value, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("macro unwrap panic: %v", r)
-		}
-	}()
-	return ctx.unwrapMacro(v, false), err
+	return comp.value()
 }
 
 func (ctx *Context) unwrapMacro(v Value, quasi bool) Value {
-	if v.Type() != 'l' || v.Lst().Empty() {
+	if v.Type() != 'l' || v.Lst().testEmpty() == 't' {
 		return v
 	}
 
@@ -691,10 +685,7 @@ func (ctx *Context) unwrapMacro(v Value, quasi bool) Value {
 				for comp.MoveNext(&comp); !comp.Empty(); comp.MoveNext(&comp) {
 					args = args.append(ctx.unwrapMacro(comp.Val(), false).Quote())
 				}
-				v, err := ctx.Exec(args.value())
-				if err != nil {
-					panic(err)
-				}
+				v := __exec(args.value(), execState{local: ctx, curCaller: callerInfo{&Value{}, new(string)}, macroMode: true})
 				return ctx.unwrapMacro(v, false)
 			}
 		}
@@ -1099,4 +1090,14 @@ func (p *Pair) Proper() bool {
 			return true
 		}
 	}
+}
+
+func Cons(v, v2 Value) *Pair {
+	p := (&Pair{}).SetVal(v)
+	if v2.Type() == 'l' {
+		p.SetNext(v2.Lst())
+	} else {
+		p.SetNext((&Pair{}).SetVal(v2))
+	}
+	return p
 }
