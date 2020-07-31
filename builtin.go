@@ -123,9 +123,18 @@ func init() {
 		}
 		s.Out = last
 	}))
+	Default.Store("define-modules", F(1|Vararg, func(s *State) {
+	}))
+
+	RegisterGoType(int64(0))
 	Default.Store("i64", F(1|Macro, func(s *State) { v, _ := strconv.ParseInt(trystr(s), 0, 64); s.Out = Val(v) }))
+
+	RegisterGoType(uint64(0))
 	Default.Store("u64", F(1|Macro, func(s *State) { v, _ := strconv.ParseUint(trystr(s), 0, 64); s.Out = Val(v) }))
+
+	RegisterGoType(&big.Int{})
 	Default.Store("bigint", F(1|Macro, func(s *State) { i := &big.Int{}; i.UnmarshalText([]byte(trystr(s))); s.Out = Val(i) }))
+
 	Default.Store("go->value", F(1, func(s *State) {
 		rv := reflect.ValueOf(s.In().Val())
 		switch rv.Kind() {
@@ -149,7 +158,7 @@ func init() {
 	Default.Store("hash-set!", F(3, func(s *State) { s.InMap()[s.InType('s').Str()] = s.In() }))
 	Default.Store("hash-delete!", F(2, func(s *State) { delete(s.InMap(), s.InType('s').Str()) }))
 	Default.Store("hash-get", F(2, func(s *State) { s.Out = s.InMap()[s.InType('s').Str()] }))
-	Default.Store("hash-contains", F(2, func(s *State) { _, ok := s.InMap()[s.InType('s').Str()]; s.Out = Bln(ok) }))
+	Default.Store("hash-contains?", F(2, func(s *State) { _, ok := s.InMap()[s.InType('s').Str()]; s.Out = Bln(ok) }))
 	Default.Store("hash-keys", F(1, func(s *State) {
 		ret := initlistbuilder()
 		for i := range s.InMap() {
@@ -157,9 +166,9 @@ func init() {
 		}
 		s.Out = ret.value()
 	}))
-	Default.Store("substring?", F(2, func(s *State) {
-		s.Out = Bln(strings.Contains(s.InType('s').Str(), s.InType('s').Str()))
-	}))
+
+	Default.Store("string-length", F(1, func(s *State) { s.Out = Num(float64(len(s.InType('s').Str()))) }))
+	Default.Store("substring?", F(2, func(s *State) { s.Out = Bln(strings.Contains(s.InType('s').Str(), s.InType('s').Str())) }))
 	// 	Default.Install("skip", 2, func(s *State) {
 	// 		l := s.In(1, 'l').Lst()
 	// 		for i := 0; i < int(s.In(0, 'n').Num()); i++ {
@@ -425,10 +434,10 @@ func init() {
 	// 		return string(buf), err
 	// 	})
 	Default.Store("$", F(Macro|Vararg, func(s *State) {
-		v := Lst(s.Args).String()
+		v := Lst(s.Args).stringify(true)
 		expr, err := parser.ParseExpr(v)
 		if err != nil {
-			panic(err)
+			panic(fmt.Errorf("go syntax error %v", err))
 		}
 		var do func(ast.Expr) Value
 		do = func(e ast.Expr) Value {

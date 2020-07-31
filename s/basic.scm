@@ -1,9 +1,3 @@
-(define foo (eval (parse "s/module.scm")))
-(pcall (lambda (x) (display x) (assert (= x 100)) ) (lambda () (foo 100)))
-
-(assert (substring? (stringify (eval '(foo 99))) "module.scm"))
-(assert (substring? (stringify (eval '(foo 99))) "99 at raise"))
-
 (assert (= 2 (pcall (lambda (e) (+ e 1)) (lambda () (assert (= 1 1)) (raise 1) (* 3 4)))))
 (assert (<= 1 2 2 4))
 (assert (>= 10 2 2 1))

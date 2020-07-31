@@ -53,6 +53,7 @@ type (
 		arglast     Value
 		Args        *Pair
 		Out, Caller Value
+		CallerLoc   *string
 	}
 	Context struct {
 		assertable
@@ -170,7 +171,7 @@ func init() {
 		fn := Lst(Empty, s.Caller.Make("lambda"), Lst(Empty, names...), Lst(s.Args, s.Caller.Make("if"), Void, Void))
 		s.Out = Lst(Lst(Empty, values...).Lst(), fn)
 	})).Store("eval", F(1, func(s *State) {
-		s.Out = ev2(s.Context.Exec(s.In()))
+		s.Out = __exec(s.In(), execState{local: s.Context, curCaller: callerInfo{&Value{}, s.CallerLoc}})
 	})).Store("parse", F(1, func(s *State) {
 		x := s.InType('s').Str()
 		if _, err := os.Stat(x); err == nil {
@@ -484,6 +485,7 @@ TAIL_CALL:
 	state.assert(fn.Type() == 'f' || state.panic("invalid function: %v", head))
 	cc := fn.Fun()
 
+	oldLoc := *state.curCaller.loc
 	if cc.f == nil {
 		if cc.macro && !state.macroMode {
 			return __exec(state.local.unwrapMacro(expr, false), state)
@@ -498,11 +500,17 @@ TAIL_CALL:
 			c.Next().Range(func(v Value) bool { values = values.append(__exec(v, state)); return true })
 			m.set(cc.nvar_or_fname, values.value())
 		}
-		*state.curCaller.v, *state.curCaller.loc, state.local, expr = head, cc.location, m, cc.n
-		goto TAIL_CALL
+		if *state.curCaller.loc == cc.location {
+			*state.curCaller.v, state.local, expr = head, m, cc.n
+			goto TAIL_CALL
+		}
+		*state.curCaller.loc, state.local = cc.location, m
+		v := __exec(cc.n, state)
+		*state.curCaller.loc = oldLoc
+		return v
 	}
 
-	s := State{Context: state.local, Out: Void, Caller: head}
+	s := State{Context: state.local, Out: Void, Caller: head, CallerLoc: state.curCaller.loc}
 	args := initlistbuilder()
 	c.Next().Range(func(v Value) bool { args = args.append(__exec(v, state)); return true })
 
@@ -512,6 +520,7 @@ TAIL_CALL:
 
 	s.Args = args.L
 	cc.f(&s)
+	*state.curCaller.loc = oldLoc
 	return s.Out
 }
 
@@ -567,6 +576,12 @@ func (ctx *Context) RunFile(path string) (result Value, err error) {
 	c, err := ctx.Parse(path, *(*string)(unsafe.Pointer(&buf)))
 	if err != nil {
 		return Void, err
+	}
+	buf, err = c.Lst().Val().Fun().n.Marshal()
+	panicerr(err)
+	{
+		c := Void
+		fmt.Println(c.Unmarshal(buf))
 	}
 	return ctx.Exec(c)
 }
@@ -806,7 +821,9 @@ func (v Value) Type() byte {
 	}
 }
 
-func (v Value) String() string {
+func (v Value) String() string { return v.stringify(false) }
+
+func (v Value) stringify(goStyle bool) string {
 	switch v.Type() {
 	case 'n':
 		return strconv.FormatFloat(v.Num(), 'f', -1, 64)
@@ -814,15 +831,15 @@ func (v Value) String() string {
 		return strconv.Quote(v.Str())
 	case 'y':
 		line, col := v.Pos()
-		return v.Str() + ifstr(line > 0, fmt.Sprintf(" /*%d:%d*/", line, col), "")
+		return v.Str() + ifstr(line > 0, fmt.Sprintf(ifstr(goStyle, " /*%d:%d*/", " #|%d:%d|#"), line, col), "")
 	case 'l':
 		vl, p := v.Lst(), bytes.NewBufferString("(")
 		for vl != nil && !vl._empty {
 			if vl.Next() == nil {
 				p.WriteString(". ")
-				p.WriteString(vl.Val().String())
+				p.WriteString(vl.Val().stringify(goStyle))
 			} else {
-				p.WriteString(vl.Val().String())
+				p.WriteString(vl.Val().stringify(goStyle))
 				p.WriteString(" ")
 			}
 			vl = vl.Next()
@@ -833,13 +850,13 @@ func (v Value) String() string {
 		p.WriteString(")")
 		return p.String()
 	case 'b':
-		return ifstr(v.Bln(), "#t", "#f")
+		return ifstr(v.Bln(), ifstr(goStyle, "true", "#t"), ifstr(goStyle, "false", "#f"))
 	case 'i':
 		return "#" + fmt.Sprint(*v.itfptr())
 	case 'f':
 		return v.Fun().String()
 	default:
-		return "#v"
+		return ifstr(goStyle, "nil", "#v")
 	}
 }
 func (v Value) GoString() string { return fmt.Sprintf("{val:%016x ptr:%016x}", v.val, v.ptr) }

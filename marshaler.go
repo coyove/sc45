@@ -2,11 +2,27 @@ package scmbed
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"encoding/binary"
+	"encoding/gob"
 	"fmt"
 	"io"
+	"reflect"
 	"unsafe"
 )
+
+var (
+	goTypesReg    = map[uint32]reflect.Type{}
+	goTypesRegRev = map[reflect.Type]uint32{}
+)
+
+func RegisterGoType(dummy interface{}) {
+	t := reflect.TypeOf(dummy)
+	x := sha1.Sum([]byte(t.String()))
+	h := binary.BigEndian.Uint32(x[:4])
+	goTypesReg[h] = t
+	goTypesRegRev[t] = h
+}
 
 func panicerr(err error) {
 	if err != nil {
@@ -41,7 +57,15 @@ func (v *Value) Unmarshal(buf []byte) (err error) {
 	return
 }
 
+func writeString(p *bytes.Buffer, s string) {
+	var tmp [10]byte
+	n := binary.PutVarint(tmp[:], int64(len(s)))
+	p.Write(tmp[:n])
+	p.WriteString(s)
+}
+
 func (v Value) marshal(p *bytes.Buffer) {
+
 	switch v.Type() {
 	case 'n':
 		if v := v.Num(); float64(int64(v)) == v {
@@ -62,11 +86,7 @@ func (v Value) marshal(p *bytes.Buffer) {
 		fallthrough
 	case 's':
 		p.WriteByte('s')
-		s := v.Str()
-		var tmp [10]byte
-		n := binary.PutVarint(tmp[:], int64(len(s)))
-		p.Write(tmp[:n])
-		p.WriteString(s)
+		writeString(p, v.Str())
 	case 'l':
 		p.WriteByte('l')
 		vl := v.Lst()
@@ -82,8 +102,16 @@ func (v Value) marshal(p *bytes.Buffer) {
 		p.WriteByte('L')
 	case 'b':
 		p.WriteByte(ifbyte(v.Bln(), 'B', 'b'))
-	case 'f', 'i':
-		panic(fmt.Errorf("function and interface{} cannot be marshalled"))
+	case 'f':
+		panic(fmt.Errorf("function cannot be marshalled"))
+	case 'i':
+		i := v.Val()
+		t := reflect.TypeOf(i)
+		if goTypesRegRev[t] == 0 {
+			panic(fmt.Errorf("marshal: %v is not registered", t))
+		}
+		binary.Write(p, binary.BigEndian, goTypesRegRev[t])
+		gob.NewEncoder(p).Encode(i)
 	default:
 		p.WriteByte('v')
 	}
@@ -143,8 +171,17 @@ func (v *Value) unmarshal(p interface {
 		*v = vl.value()
 	case 'b', 'B':
 		*v = Bln(tag == 'B')
-	case 'f', 'i':
-		panic(fmt.Errorf("unmarshaler impossible case"))
+	case 'f':
+		panic(fmt.Errorf("unmarshaler: impossible case"))
+	case 'i':
+		var typetag uint32
+		panicerr(binary.Read(p, binary.BigEndian, &typetag))
+		if goTypesReg[typetag] == nil {
+			panic(fmt.Errorf("unmarshaler: missing data type to recover interface{}"))
+		}
+		rv := reflect.New(goTypesReg[typetag])
+		panicerr(gob.NewDecoder(p).Decode(rv.Interface()))
+		*v = Val(rv.Interface())
 	default:
 		*v = Void
 	}

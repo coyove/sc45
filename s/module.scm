@@ -1,2 +1,4 @@
 (lambda (d) 
-(raise d))
+  (if (number? d)
+    (raise d)
+    (d)))

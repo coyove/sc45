@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -89,6 +90,21 @@ func TestOne(t *testing.T) {
 	assert("s/list.scm")
 	assert("s/fib.scm")
 	assert("s/misc.scm")
+
+	{
+		_, err := it.Run(`(define foo (eval (parse "s/module.scm")))
+(eval '(foo (lambda () (raise 99))))`)
+		if !strings.Contains(err.Error(), "((memory))") {
+			t.Fatal(err)
+		}
+	}
+	{
+		_, err := it.Run(`(define foo (eval (parse "s/module.scm")))
+(eval '(foo 99))`)
+		if !strings.Contains(err.Error(), "(s/module.scm)") {
+			t.Fatal(err)
+		}
+	}
 
 	// 	assert(`(assert (= (car (var/test 1 2 3)) 3)`)
 	// 	assert(`(assert (error? (var/test 100 2 3)`)
