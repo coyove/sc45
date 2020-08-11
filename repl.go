@@ -1,4 +1,4 @@
-package scmbed
+package sc45
 
 import (
 	"bytes"
@@ -28,7 +28,7 @@ func (ctx *Context) InjectDebugPProfREPL(title string) {
 	.results > div { display: block !important; clear:both }
 	.results .result {margin-left:1em;white-space:pre-wrap;float:right}
 </style>
-<script src="https://cdn.jsdelivr.net/gh/coyove/scmbed/tribute.min.js" ></script>
+<script src="https://cdn.jsdelivr.net/gh/coyove/sc45/tribute.min.js" ></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tributejs/5.1.2/tribute.min.css" integrity="sha256-jCuf8eDAzmPpRqt5n0v1utTOCeWZc4OrGbv24Pw+ltk=" crossorigin="anonymous" />
 
 <form onsubmit="var _=this;post('',{cmd:this.querySelector('#cmd').value},function(obj, data){

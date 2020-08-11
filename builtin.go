@@ -1,4 +1,4 @@
-package scmbed
+package sc45
 
 import (
 	"bytes"
@@ -16,6 +16,7 @@ import (
 )
 
 var DefaultStdout io.Writer = os.Stdout
+var stateType = reflect.TypeOf(&State{})
 
 func (s *State) InMap() map[string]Value {
 	v, _ := s.InType('i').Val().(map[string]Value)
@@ -51,18 +52,29 @@ func Fgo(fn interface{}) Value {
 	if rt.IsVariadic() {
 		count = Vararg | (count - 1)
 	}
+	if count > 0 && rt.In(0) == stateType {
+		count--
+	}
 	return F(count, func(s *State) {
 		ins := make([]reflect.Value, 0, rt.NumIn())
 		if rt.IsVariadic() {
 			for i := 0; i < rt.NumIn()-1; i++ {
-				ins = append(ins, s.In().TypedVal(rt.In(i)))
+				if t := rt.In(i); i == 0 && t == stateType {
+					ins = append(ins, reflect.ValueOf(s))
+				} else {
+					ins = append(ins, s.In().TypedVal(t))
+				}
 			}
 			for !s.Args.Empty() {
 				ins = append(ins, s.In().TypedVal(rt.In(rt.NumIn()-1).Elem()))
 			}
 		} else {
 			for i := 0; i < rt.NumIn(); i++ {
-				ins = append(ins, s.In().TypedVal(rt.In(i)))
+				if t := rt.In(i); i == 0 && t == stateType {
+					ins = append(ins, reflect.ValueOf(s))
+				} else {
+					ins = append(ins, s.In().TypedVal(t))
+				}
 			}
 		}
 		outs := rf.Call(ins)

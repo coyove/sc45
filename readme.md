@@ -1,10 +1,10 @@
-Scmbed is a relatively-small-basically-working scheme dialect in Go, its core consists of only one file (scmbed.go) with no external dependencies.
+Sc45 is a relatively-small-basically-working scheme dialect in Go, its core consists of only one file (sc45.go) with no external dependencies.
 
-Scmbed serves one purpose: give your program an embedded REPL on-the-fly with minimal efforts:
+Sc45 serves one purpose: give your program an embedded REPL on-the-fly with minimal efforts:
 
 ```Go
 func init() {
-    it := scmbed.New()
+    it := sc45.New()
     it.Store("turn-on-flag1", Fgo(func(v bool) { FLAG1 = v }))
     it.Store("turn-on-flag2", Fgo(func(v bool) { FLAG2 = v }))
     it.Store("pre-setup", Fgo(func(n int, kafkaTopic string) { RerouteMsg(n, kafkaTopic) }))
@@ -33,6 +33,6 @@ Inside REPL:
 ```
 
 # Language details
-- `call/cc` is not supported, due to scmbed's recursive evaluation intepreter, this is also impossible (maybe possible by using goroutines, but with great performance penalty)
+- `call/cc` is not supported, due to sc45's recursive evaluation intepreter, this is also impossible (maybe possible by using goroutines, but with great performance penalty)
 - Numbers are float64 internally, but their raw string representations are stored as well, which means you can cast a `Value` to either a `float64` or a `string`
 - Macro definition syntax: `(define-macro name (lambda (paramlist) body))`, macro is a legit function which takes expressions as inputs and outputs expressions, so it is more like Lisp macro

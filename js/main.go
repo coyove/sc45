@@ -3,11 +3,11 @@ package main
 import (
 	"syscall/js"
 
-	"github.com/coyove/scmbed"
+	"github.com/coyove/sc45"
 )
 
 func main() {
-	it := scmbed.New()
+	it := sc45.New()
 	js.Global().Set("run", js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 		return it
 	}))

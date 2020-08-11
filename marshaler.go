@@ -1,4 +1,4 @@
-package scmbed
+package sc45
 
 import (
 	"bytes"

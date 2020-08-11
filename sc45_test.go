@@ -1,4 +1,4 @@
-package scmbed
+package sc45
 
 import (
 	"fmt"
@@ -46,7 +46,7 @@ func TestOne(t *testing.T) {
 		return
 	}))
 	it.Store("make/vararg", Fgo(func(v ...interface{}) []interface{} { return v }))
-	it.Store("make/vararg2", Fgo(func(a1 int32, v2 ...string) []interface{} {
+	it.Store("make/vararg2", Fgo(func(s *State, a1 int32, v2 ...string) []interface{} {
 		a := []interface{}{a1}
 		for _, v := range v2 {
 			a = append(a, v)
