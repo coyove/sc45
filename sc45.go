@@ -54,20 +54,20 @@ type (
 		arglast     Value
 		Args        *Pair
 		Out, Caller Value
-		CallerLoc   *string
+		Debug       debugInfo
 	}
 	Context struct {
 		assertable
 		parent *Context
 		m      map[string]Value
 	}
-	callerInfo struct {
-		v   *Value
-		loc *string
+	debugInfo struct {
+		K *Value
+		L *string
 	}
 	execState struct {
 		assertable
-		curCaller callerInfo
+		debug     debugInfo
 		local     *Context
 		quasi     bool
 		macroMode bool
@@ -202,8 +202,8 @@ TAIL_CALL:
 	}
 
 	head := c.Val()
-	if *state.curCaller.v = c.Val(); state.curCaller.v.Type() == 'y' {
-		switch va := state.curCaller.v.Str(); va {
+	if *state.debug.K = c.Val(); state.debug.K.Type() == 'y' {
+		switch va := state.debug.K.Str(); va {
 		case "if":
 			state.assert(c.MoveNext(&c) || state.panic("invalid if syntax, missing condition"))
 			if !__exec(c.Val(), state).IsFalse() {
@@ -223,7 +223,7 @@ TAIL_CALL:
 			return Void
 		case "lambda", "lambda-syntax":
 			state.assert(c.MoveNext(&c) || state.panic("invalid lambda* syntax, missing parameters"))
-			f := &Func{cls: state.local, macro: va != "lambda", location: *state.curCaller.loc}
+			f := &Func{cls: state.local, macro: va != "lambda", location: *state.debug.L}
 			switch c.Val().Type() {
 			case 'y': // (lambda* args body)
 				f.nvar_or_fname = c.Val().Str()
@@ -243,7 +243,7 @@ TAIL_CALL:
 			}
 			state.assert(c.MoveNext(&c) || state.panic("invalid lambda syntax, missing lambda body"))
 			if f.n = c.Val(); c.HasNext() {
-				f.n = Lst(c, state.curCaller.v.Make("if"), Void, Void)
+				f.n = Lst(c, Sym2("if", *state.debug.K), Void, Void)
 			}
 			return Fun(f)
 		case "match":
@@ -265,7 +265,7 @@ TAIL_CALL:
 			}
 			m := &Context{parent: state.local, m: map[string]Value{}}
 			if source.Lst().match(state, pattern, false, symbolmap, m.m) {
-				return __exec(c.Val(), execState{curCaller: state.curCaller, local: m})
+				return __exec(c.Val(), execState{debug: state.debug, local: m})
 			}
 			if c.HasNext() {
 				goto MATCH_NEXT
@@ -300,7 +300,7 @@ TAIL_CALL:
 				lst := c.Val().Lst()
 				state.assert(!lst.Empty() || state.panic("invalid define syntax, missing function name")).
 					assert(c.MoveNext(&c) || state.panic("invalid define syntax, missing bound value"))
-				s := Lst(Empty, head.Make("define"), lst.Val(), Lst(c, head.Make("lambda"), Lst(lst.Next())))
+				s := Lst(Empty, Sym2("define", head), lst.Val(), Lst(c, Sym2("lambda", head), Lst(lst.Next())))
 				return __exec(s, state)
 			default:
 				panic("invalid define syntax, missing binding symbol")
@@ -313,7 +313,7 @@ TAIL_CALL:
 	state.assert(fn.Type() == 'f' || state.panic("invalid function: %v", head))
 	cc := fn.Fun()
 
-	oldLoc := *state.curCaller.loc
+	oldLoc := *state.debug.L
 	if cc.f == nil {
 		if cc.macro && !state.macroMode {
 			return __exec(state.local.unwrapMacro(expr, false), state)
@@ -328,27 +328,27 @@ TAIL_CALL:
 			c.Next().Range(func(v Value) bool { values = values.append(__exec(v, state)); return true })
 			m.set(cc.nvar_or_fname, values.value())
 		}
-		if *state.curCaller.loc == cc.location {
-			*state.curCaller.v, state.local, expr = head, m, cc.n
+		if *state.debug.L == cc.location {
+			*state.debug.K, state.local, expr = head, m, cc.n
 			goto TAIL_CALL
 		}
-		*state.curCaller.loc, state.local = cc.location, m
+		*state.debug.L, state.local = cc.location, m
 		v := __exec(cc.n, state)
-		*state.curCaller.loc = oldLoc
+		*state.debug.L = oldLoc
 		return v
 	}
 
-	s := State{Context: state.local, Out: Void, Caller: head, CallerLoc: state.curCaller.loc}
+	s := State{Context: state.local, Out: Void, Caller: head, Debug: state.debug}
 	args := initlistbuilder()
 	c.Next().Range(func(v Value) bool { args = args.append(__exec(v, state)); return true })
 
-	*state.curCaller.v = head
+	*state.debug.K = head
 	state.assert(args.count == cc.fvars || (cc.fvar && args.count >= cc.fvars) ||
 		state.panic("call: expect "+ifstr(cc.fvar, "at least ", "")+strconv.Itoa(cc.fvars)+" arguments"))
 
 	s.Args = args.L
 	cc.f(&s)
-	*state.curCaller.loc = oldLoc
+	*state.debug.L = oldLoc
 	return s.Out
 }
 
@@ -383,17 +383,16 @@ func (ctx *Context) Parse(filename, text string) (expr Value, err error) {
 }
 
 func (ctx *Context) Exec(c Value) (output Value, err error) {
-	var curCaller Value
-	var curLoc string
+	var dbg = debugInfo{new(Value), new(string)}
 	defer func() {
 		if r := recover(); r != nil {
 			if os.Getenv("SBD_STACK") != "" {
 				fmt.Println(string(debug.Stack()))
 			}
-			err = fmt.Errorf("%v at %v (%s)", r, curCaller, curLoc)
+			err = fmt.Errorf("%v at %v (%s)", r, *dbg.K, *dbg.L)
 		}
 	}()
-	return __exec(c, execState{local: ctx, curCaller: callerInfo{&curCaller, &curLoc}}), nil
+	return __exec(c, execState{local: ctx, debug: dbg}), nil
 }
 
 func (ctx *Context) RunFile(path string) (result Value, err error) {
@@ -528,7 +527,7 @@ func (ctx *Context) unwrapMacro(v Value, quasi bool) Value {
 				for comp.MoveNext(&comp); !comp.Empty(); comp.MoveNext(&comp) {
 					args = args.append(ctx.unwrapMacro(comp.Val(), false).Quote())
 				}
-				v := __exec(args.value(), execState{local: ctx, curCaller: callerInfo{&Value{}, new(string)}, macroMode: true})
+				v := __exec(args.value(), execState{local: ctx, debug: debugInfo{&Value{}, new(string)}, macroMode: true})
 				return ctx.unwrapMacro(v, false)
 			}
 		}
@@ -546,9 +545,7 @@ func (ctx *Context) unwrapMacro(v Value, quasi bool) Value {
 func scanToDelim(s *scanner.Scanner) string {
 	for p := (bytes.Buffer{}); ; {
 		next := s.Peek()
-		if unicode.IsSpace(next) ||
-			next < 0 || // Special scanner.XXXX runes
-			next == '[' || next == ']' || next == '(' || next == ')' || next == ';' {
+		if unicode.IsSpace(next) || next < 0 /* scanner.XXXX */ || strings.IndexRune("[]();", next) > -1 {
 			return p.String()
 		}
 		s.Scan()
@@ -568,9 +565,8 @@ func (e *assertable) panic(t string, a ...interface{}) bool {
 	return false
 }
 
-func ev2(v interface{}, err error) Value { return [2]Value{Val(v), Val(err)}[Bln(err != nil).BlnNum()] }
-func ifstr(v bool, t, f string) string   { return [2]string{f, t}[Bln(v).BlnNum()] }
-func ifbyte(v bool, t, f byte) byte      { return [2]byte{f, t}[Bln(v).BlnNum()] }
+func ifstr(v bool, t, f string) string { return [2]string{f, t}[Bln(v).BlnNum()] }
+func ifbyte(v bool, t, f byte) byte    { return [2]byte{f, t}[Bln(v).BlnNum()] }
 
 // Val creates Value from interface{}. uint64 and int64 will be stored as they were because float64 can't handle them correctly
 func Val(v interface{}) Value {
@@ -607,6 +603,12 @@ func Bln(v bool) Value {
 func Sym(v string, line, col int) Value {
 	return Value{ptr: unsafe.Pointer(&v), val: 1<<51 | (uint64(line)&0xffffff)<<24 | (uint64(col) & 0xffffff)}
 }
+func Sym2(text string, v Value) Value {
+	if l, c := v.Pos(); v.Type() == 'y' {
+		return Sym(text, l, c)
+	}
+	return Sym(text, 0, 0)
+}
 func Lst(lst *Pair, l ...Value) Value {
 	for i := len(l) - 1; i >= 0; i-- {
 		n := (&Pair{}).SetNext(lst).SetVal(l[i])
@@ -626,7 +628,6 @@ func Fun(f *Func) Value                { return Value{val: 'f', ptr: unsafe.Poin
 
 func (v *Value) itfptr() *interface{} { return (*interface{})(unsafe.Pointer(v)) }
 func (v Value) IsFalse() bool         { return v.val < 2 } // 0: void, 1: false
-
 func (v Value) Quote() Value {
 	if t := v.Type(); t == 'l' || t == 'y' {
 		return Lst((&Pair{}).SetVal(Quote).SetNext((&Pair{}).SetVal(v).SetNext(Empty)))
@@ -708,14 +709,6 @@ func (v Value) Val() interface{} {
 	default:
 		return nil
 	}
-}
-
-func (v Value) Make(text string) Value {
-	if v.Type() == 'y' {
-		v.ptr = unsafe.Pointer(&text)
-		return v
-	}
-	return Sym(text, 0, 0)
 }
 
 func (v Value) Equals(v2 Value) bool {
@@ -871,8 +864,8 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 	case 'l':
 		if lst := pattern.Val().Lst(); lst.Val().Type() == 'y' && lst.Val().Str() == "quote" {
 			if __exec(lst.Next().Val(), execState{
-				curCaller: state.curCaller,
-				local:     &Context{parent: state.local, m: map[string]Value{"_": p.Val()}},
+				debug: state.debug,
+				local: &Context{parent: state.local, m: map[string]Value{"_": p.Val()}},
 			}).IsFalse() {
 				return false
 			}

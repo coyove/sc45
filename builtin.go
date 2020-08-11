@@ -97,14 +97,14 @@ func _Ft(t byte) Value { return F(1, func(s *State) { s.Out = Bln(s.In().Type() 
 
 func init() {
 	Default.Store("true", Bln(true)).Store("false", Bln(false)).Store("begin", F(Macro|Vararg, func(s *State) {
-		s.Out = Lst(s.Args, s.Caller.Make("if"), Void, Void)
+		s.Out = Lst(s.Args, Sym2("if", s.Caller), Void, Void)
 	})).Store("and", F(Macro|Vararg, func(s *State) {
 		if s.Args.Empty() {
 			s.Out = Bln(true)
 		} else if !s.Args.HasNext() {
 			s.Out = s.In()
 		} else {
-			s.Out = Lst(Empty, s.Caller.Make("if"), s.In(), Lst(s.Args, s.Caller.Make("and")), Bln(false))
+			s.Out = Lst(Empty, Sym2("if", s.Caller), s.In(), Lst(s.Args, Sym2("and", s.Caller)), Bln(false))
 		}
 	})).Store("or", F(Macro|Vararg, func(s *State) {
 		if s.Args.Empty() {
@@ -112,7 +112,7 @@ func init() {
 		} else if !s.Args.HasNext() {
 			s.Out = s.In()
 		} else {
-			s.Out = Lst(Empty, s.Caller.Make("if"), s.In(), Bln(true), Lst(s.Args, s.Caller.Make("or")))
+			s.Out = Lst(Empty, Sym2("if", s.Caller), s.In(), Bln(true), Lst(s.Args, Sym2("or", s.Caller)))
 		}
 	})).Store("==", F(1|Vararg, func(s *State) {
 		flag := true
@@ -135,9 +135,9 @@ func init() {
 		}
 		s.Out = Bln(flag)
 	})).Store(">", F(1|Vararg|Macro, func(s *State) {
-		s.Out = Lst(Empty, s.Caller.Make("not"), Lst(s.Args, s.Caller.Make("<=")))
+		s.Out = Lst(Empty, Sym2("not", s.Caller), Lst(s.Args, Sym2("<=", s.Caller)))
 	})).Store(">=", F(1|Vararg|Macro, func(s *State) {
-		s.Out = Lst(Empty, s.Caller.Make("not"), Lst(s.Args, s.Caller.Make("<")))
+		s.Out = Lst(Empty, Sym2("not", s.Caller), Lst(s.Args, Sym2("<", s.Caller)))
 	})).Store("not", F(1, func(s *State) {
 		s.Out = Bln(s.In().IsFalse())
 	})).Store("+", F(1|Vararg, func(s *State) {
@@ -187,10 +187,10 @@ func init() {
 			names, values = append(names, p.Val()), append(values, p.Next().Val())
 			return true
 		})
-		fn := Lst(Empty, s.Caller.Make("lambda"), Lst(Empty, names...), Lst(s.Args, s.Caller.Make("if"), Void, Void))
+		fn := Lst(Empty, Sym2("lambda", s.Caller), Lst(Empty, names...), Lst(s.Args, Sym2("if", s.Caller), Void, Void))
 		s.Out = Lst(Lst(Empty, values...).Lst(), fn)
 	})).Store("eval", F(1, func(s *State) {
-		s.Out = __exec(s.In(), execState{local: s.Context, curCaller: callerInfo{&Value{}, s.CallerLoc}})
+		s.Out = __exec(s.In(), execState{local: s.Context, debug: s.Debug})
 	})).Store("parse", F(1, func(s *State) {
 		x := s.InType('s').Str()
 		if _, err := os.Stat(x); err == nil {
@@ -246,7 +246,7 @@ func init() {
 				}
 			}
 		}()
-		s.Out = __exec(Lst(Empty, s.In().Quote()), execState{curCaller: callerInfo{&Value{}, new(string)}, local: s.Context})
+		s.Out = __exec(Lst(Empty, s.In().Quote()), execState{debug: s.Debug, local: s.Context})
 	})).Store("apply", F(2, func(s *State) {
 		expr := initlistbuilder().append(s.InType('f').Quote())
 		s.InType('l').Lst().Range(func(v Value) bool { expr = expr.append(v.Quote()); return true })
@@ -274,7 +274,7 @@ func init() {
 				(set! 'varn varb_tmp)
 				expr...                                // expressions
 		*/
-		let, setq := s.Caller.Make("let"), s.Caller.Make("set!")
+		let, setq := Sym2("let", s.Caller), Sym2("set!", s.Caller)
 		var innersets, innerbinds, outerbinds []Value
 		s.InType('l').Lst().Range(func(v Value) bool {
 			s.assert(v.Type() == 'l' || s.panic("invalid binding list format: %v", v))
@@ -297,8 +297,8 @@ func init() {
 				...
 					expr...
 		*/
-		let, binds := s.Caller.Make("let"), s.InType('l').Lst().ToSlice()
-		last := Lst(s.Args, s.Caller.Make("begin"))
+		let, binds := Sym2("let", s.Caller), s.InType('l').Lst().ToSlice()
+		last := Lst(s.Args, Sym2("begin", s.Caller))
 		for i := len(binds) - 1; i >= 0; i-- {
 			bd := binds[i]
 			s.assert(bd.Type() == 'l' || s.panic("invalid binding list format: %v", bd))
@@ -364,10 +364,10 @@ func init() {
 	// 	Default.Install("lambda*", 2|Vararg|Macro, func(s *State) {
 	// 		tmpvar := "a" + strconv.FormatInt(time.Now().Unix(), 10)
 	// 		pl, body := s.In(0, 'l').Lst(), []Value{
-	// 			s.Caller.Make("lambda"),
+	// 			Sym2("lambda", s.Caller),
 	// 			s.Caller.Make(tmpvar),
-	// 			Lst(s.Caller.Make("define"), s.Caller.Make(tmpvar+"-len"), Lst(
-	// 				s.Caller.Make("vector-len"), s.Caller.Make(tmpvar),
+	// 			Lst(Sym2("define", s.Caller), s.Caller.Make(tmpvar+"-len"), Lst(
+	// 				Sym2("vector-len", s.Caller), s.Caller.Make(tmpvar),
 	// 			)),
 	// 		}
 	// 		/*
@@ -386,9 +386,9 @@ func init() {
 	// 				if a := pl[i].Str(); strings.HasSuffix(a, "...") {
 	// 					// Special case: "name..." to catch the rest arguments
 	// 					body = append(body, Lst(
-	// 						s.Caller.Make("define"),
+	// 						Sym2("define", s.Caller),
 	// 						s.Caller.Make(ifstr(len(a) == 3, "...", a[:len(a)-3])),
-	// 						Lst(s.Caller.Make("skip"), Num(float64(i)), s.Caller.Make(tmpvar)),
+	// 						Lst(Sym2("skip", s.Caller), Num(float64(i)), s.Caller.Make(tmpvar)),
 	// 					))
 	// 					continue
 	// 				}
@@ -397,12 +397,12 @@ func init() {
 	// 				name, val = pl[i]._at(0), pl[i]._at(1)
 	// 			}
 	// 			body = append(body, Lst(
-	// 				s.Caller.Make("define"),
+	// 				Sym2("define", s.Caller),
 	// 				name,
 	// 				Lst(
-	// 					s.Caller.Make("if"),
-	// 					Lst(s.Caller.Make("<"), Num(float64(i)), s.Caller.Make(tmpvar+"-len")),
-	// 					Lst(s.Caller.Make("vector-nth"), s.Caller.Make(tmpvar), Num(float64(i))),
+	// 					Sym2("if", s.Caller),
+	// 					Lst(Sym2("<", s.Caller), Num(float64(i)), s.Caller.Make(tmpvar+"-len")),
+	// 					Lst(Sym2("vector-nth", s.Caller), s.Caller.Make(tmpvar), Num(float64(i))),
 	// 					val,
 	// 				),
 	// 			))
@@ -480,16 +480,16 @@ func init() {
 	}))
 	// 	Default.Install("cond", Macro|Vararg, func(s *State) {
 	// 		if len(s.Args) == 0 {
-	// 			s.Out = s.Caller.Make("true")
+	// 			s.Out = Sym2("true", s.Caller)
 	// 			return
 	// 		}
 	// 		build := func(expr Value) []Value {
 	// 			s.assert(expr.Type() == 'l' && expr._len() == 2 || s.panic("invalid cond statement: %v", expr))
 	// 			cond, stat := expr.Lst()[0], expr.Lst()[1]
 	// 			if cond.Type() == 'y' && cond.Str() == "else" {
-	// 				cond = s.Caller.Make("true")
+	// 				cond = Sym2("true", s.Caller)
 	// 			}
-	// 			return []Value{s.Caller.Make("if"), cond, stat, Void}
+	// 			return []Value{Sym2("if", s.Caller), cond, stat, Void}
 	// 		}
 	// 		exprs := build(s.In(0, 0))
 	// 		for i, head := 1, exprs; i < len(s.Args); i++ {
@@ -582,9 +582,9 @@ func init() {
 		parts := strings.Split(a, ".")
 		s.assert(len(parts) > 1 || s.panic("too few fields to set"))
 		structname := parts[0]
-		setter := initlistbuilder().append(v.Make("struct-set!")).append(v.Make(structname)).append(v)
+		setter := initlistbuilder().append(Sym2("struct-set!", v)).append(Sym2(structname, v)).append(v)
 		for i := 1; i < len(parts); i++ {
-			setter = setter.append(v.Make(parts[i]).Quote())
+			setter = setter.append(Sym2(parts[i], v).Quote())
 		}
 		s.Out = setter.value()
 	}))
@@ -593,9 +593,9 @@ func init() {
 		parts := strings.Split(a, ".")
 		s.assert(len(parts) > 1 || s.panic("too few fields to get"))
 		structname := parts[0]
-		setter := initlistbuilder().append(s.Caller.Make("struct-get")).append(s.Caller.Make(structname))
+		setter := initlistbuilder().append(Sym2("struct-get", s.Caller)).append(Sym2(structname, s.Caller))
 		for i := 1; i < len(parts); i++ {
-			setter = setter.append(s.Caller.Make(parts[i]).Quote())
+			setter = setter.append(Sym2(parts[i], s.Caller).Quote())
 		}
 		s.Out = setter.value()
 	}))
@@ -715,7 +715,7 @@ func init() {
 	// 		fields := map[string]*_f{}
 	//
 	// 		ret := []Value{
-	// 			Lst(s.Caller.Make("define"), Sym(recordName+"-type", 0, 0), Val(typeIndicator)),
+	// 			Lst(Sym2("define", s.Caller), Sym(recordName+"-type", 0, 0), Val(typeIndicator)),
 	// 		}
 	//
 	// 		for i := 1; i < len(s.Args); i++ {
@@ -749,7 +749,7 @@ func init() {
 	// 		fieldNames := []string{}
 	// 		for fn, f := range fields {
 	// 			fieldNames = append(fieldNames, fn)
-	// 			ret = append(ret, Lst(s.Caller.Make("define"), Sym(recordName+"-"+f.name, 0, 0),
+	// 			ret = append(ret, Lst(Sym2("define", s.Caller), Sym(recordName+"-"+f.name, 0, 0),
 	// 				_Vquote(Fun(&Func{
 	// 					fargs: 1,
 	// 					f: func(ss *State) {
@@ -764,7 +764,7 @@ func init() {
 	// 			if !f.mutable {
 	// 				return
 	// 			}
-	// 			ret = append(ret, Lst(s.Caller.Make("define"), Sym(recordName+"-"+f.name+"-set!", 0, 0),
+	// 			ret = append(ret, Lst(Sym2("define", s.Caller), Sym(recordName+"-"+f.name+"-set!", 0, 0),
 	// 				_Vquote(Fun(&Func{
 	// 					fargs: 2,
 	// 					f: func(ss *State) {
@@ -778,7 +778,7 @@ func init() {
 	// 			))
 	// 		}
 	//
-	// 		ret = append(ret, Lst(s.Caller.Make("define"), Sym(recordName+"-primary-fields", 0, 0), Val(fieldNames)))
+	// 		ret = append(ret, Lst(Sym2("define", s.Caller), Sym(recordName+"-primary-fields", 0, 0), Val(fieldNames)))
 	//
 	// 		// name, fields, typename := s.In(0, 'y').Str(), make(map[string]int, len(s.Args)-1), new(int)
 	// 		// for i := 1; i < len(s.Args); i++ {
@@ -802,7 +802,7 @@ func init() {
 	// 		// 	ss.Out = Bln(len(ss.In(0, 'l').Lst()) == len(s.Args) && ss.In(0, 'l').Lst()[0].Val() == typename)
 	// 		// })
 	//
-	// 		ret = append(ret, Lst(s.Caller.Make("define"), Sym("make-"+recordName, 0, 0),
+	// 		ret = append(ret, Lst(Sym2("define", s.Caller), Sym("make-"+recordName, 0, 0),
 	// 			_Vquote(Fun(&Func{
 	// 				fargs: calcRecordTotalArgs(typeIndicator),
 	// 				f: func(ss *State) {
@@ -857,4 +857,8 @@ func trystr(s *State) string {
 		}
 	}
 	return ""
+}
+
+func ev2(v interface{}, err error) Value {
+	return [2]Value{Val(v), Val(err)}[Bln(err != nil).BlnNum()]
 }

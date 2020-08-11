@@ -1,4 +1,5 @@
 (lambda (d) 
+  (assert (substring? (current-location) "module.scm"))
   (if (number? d)
     (raise d)
     (d)))

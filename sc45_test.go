@@ -3,6 +3,8 @@ package sc45
 import (
 	"fmt"
 	"log"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -66,6 +68,9 @@ func TestOne(t *testing.T) {
 	assert := func(v string) {
 		r, err := it.RunFile(v)
 		if err != nil {
+			r, err = it.Run(v)
+		}
+		if err != nil {
 			t.Fatal(v, err)
 		}
 		log.Println(v, "===>", r)
@@ -74,6 +79,9 @@ func TestOne(t *testing.T) {
 		if s.In().IsFalse() {
 			panic(fmt.Errorf("assertion failed"))
 		}
+	}))
+	it.Store("current-location", F(0, func(s *State) {
+		s.Out = Str(*s.Debug.L)
 	}))
 	it.Store("test/struct-gen", F(1, func(s *State) {
 		if s.In().IsFalse() {
@@ -131,23 +139,16 @@ func TestOne(t *testing.T) {
 	assert("s/fib.scm")
 	assert("s/misc.scm")
 
+	assert(`(define foo (eval (parse "s/module.scm")))
+	(eval '(foo (lambda () (display (current-location)) (assert (substring? (current-location) "memory")) )))`)
+
 	{
-		_, err := it.Run(`(define foo (eval (parse "s/module.scm")))
-(eval '(foo (lambda () (raise 99))))`)
-		if !strings.Contains(err.Error(), "((memory))") {
-			t.Fatal(err)
-		}
-	}
-	{
-		_, err := it.Run(`(define foo (eval (parse "s/module.scm")))
-(eval '(foo 99))`)
+		_, err := it.Run(`(define foo (eval (parse "s/module.scm"))) (eval '(foo 99))`)
 		if !strings.Contains(err.Error(), "(s/module.scm)") {
 			t.Fatal(err)
 		}
 	}
 
-	// 	assert(`(assert (= (car (var/test 1 2 3)) 3)`)
-	// 	assert(`(assert (error? (var/test 100 2 3)`)
 	// 	assert(`(assert (= "true" (cond
 	// 			((= 1 2)     (assert false))
 	// 			((> "a" "b") (assert false))
@@ -159,26 +160,18 @@ func TestOne(t *testing.T) {
 
 }
 
-// func BenchmarkRun(b *testing.B) {
-// 	text := strings.Repeat("'(1 2 3)", 10)
-// 	for i := 0; i < b.N; i++ {
-// 		it := New()
-// 		it.Run(text)
-// 	}
-// }
-//
-// func BenchmarkAdd(b *testing.B) {
-// 	var a interface{} = strconv.FormatInt(time.Now().Unix(), 10)
-// 	for i := 0; i < b.N; i++ {
-// 		a = strconv.FormatInt(int64(i), 10)
-// 	}
-// 	_ = a
-// }
-//
-// func BenchmarkAddValue(b *testing.B) {
-// 	var a = Str(strconv.FormatInt(time.Now().Unix(), 10))
-// 	for i := 0; i < b.N; i++ {
-// 		a = Str(strconv.FormatInt(int64(i), 10))
-// 	}
-// 	_ = a
-// }
+func BenchmarkRun(b *testing.B) {
+	text := strings.Repeat("'(1 2 3)", 10)
+	for i := 0; i < b.N; i++ {
+		it := New()
+		it.Run(text)
+	}
+}
+
+func TestLaunchWeb(t *testing.T) {
+	if os.Getenv("WEB") != "" {
+		it := New()
+		it.InjectDebugPProfREPL("debug")
+		http.ListenAndServe(":8080", nil)
+	}
+}
