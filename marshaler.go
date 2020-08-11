@@ -40,6 +40,11 @@ func (v Value) Marshal() (buf []byte, err error) {
 		}
 	}()
 	p := &bytes.Buffer{}
+	if v.Type() == 'l' && !v.Lst()._empty && v.Lst().Next() == Empty {
+		if v2 := v.Lst().Val(); v2.Type() == 'f' && v2.Fun().wrapper {
+			v = v2.Fun().n
+		}
+	}
 	v.marshal(p)
 	return p.Bytes(), nil
 }
@@ -110,6 +115,7 @@ func (v Value) marshal(p *bytes.Buffer) {
 		if goTypesRegRev[t] == 0 {
 			panic(fmt.Errorf("marshal: %v is not registered", t))
 		}
+		p.WriteByte('i')
 		binary.Write(p, binary.BigEndian, goTypesRegRev[t])
 		gob.NewEncoder(p).Encode(i)
 	default:
@@ -176,12 +182,20 @@ func (v *Value) unmarshal(p interface {
 	case 'i':
 		var typetag uint32
 		panicerr(binary.Read(p, binary.BigEndian, &typetag))
-		if goTypesReg[typetag] == nil {
+		rt := goTypesReg[typetag]
+		if rt == nil {
 			panic(fmt.Errorf("unmarshaler: missing data type to recover interface{}"))
 		}
-		rv := reflect.New(goTypesReg[typetag])
-		panicerr(gob.NewDecoder(p).Decode(rv.Interface()))
-		*v = Val(rv.Interface())
+
+		if rt.Kind() == reflect.Ptr {
+			rv := reflect.New(rt.Elem())
+			panicerr(gob.NewDecoder(p).Decode(rv.Interface()))
+			*v = Val(rv.Interface())
+		} else {
+			rv := reflect.New(rt)
+			panicerr(gob.NewDecoder(p).Decode(rv.Interface()))
+			*v = Val(rv.Elem().Interface())
+		}
 	default:
 		*v = Void
 	}

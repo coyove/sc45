@@ -8,11 +8,13 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"io/ioutil"
 	"math/big"
 	"os"
 	"reflect"
 	"strconv"
 	"strings"
+	"unsafe"
 )
 
 var DefaultStdout io.Writer = os.Stdout
@@ -91,7 +93,178 @@ func Fgo(fn interface{}) Value {
 	})
 }
 
+func _Ft(t byte) Value { return F(1, func(s *State) { s.Out = Bln(s.In().Type() == t) }) }
+
 func init() {
+	Default.Store("true", Bln(true)).Store("false", Bln(false)).Store("begin", F(Macro|Vararg, func(s *State) {
+		s.Out = Lst(s.Args, s.Caller.Make("if"), Void, Void)
+	})).Store("and", F(Macro|Vararg, func(s *State) {
+		if s.Args.Empty() {
+			s.Out = Bln(true)
+		} else if !s.Args.HasNext() {
+			s.Out = s.In()
+		} else {
+			s.Out = Lst(Empty, s.Caller.Make("if"), s.In(), Lst(s.Args, s.Caller.Make("and")), Bln(false))
+		}
+	})).Store("or", F(Macro|Vararg, func(s *State) {
+		if s.Args.Empty() {
+			s.Out = Bln(false)
+		} else if !s.Args.HasNext() {
+			s.Out = s.In()
+		} else {
+			s.Out = Lst(Empty, s.Caller.Make("if"), s.In(), Bln(true), Lst(s.Args, s.Caller.Make("or")))
+		}
+	})).Store("==", F(1|Vararg, func(s *State) {
+		flag := true
+		for s.In(); flag && !s.Args.Empty(); {
+			flag = s.LastIn().Equals(s.In())
+		}
+		s.Out = Bln(flag)
+	})).Store("=", Default.m["=="]).Store("!=", F(1|Vararg, func(s *State) {
+		s.Out = Bln(!s.In().Equals(s.In()))
+	})).Store("<>", Default.m["!="]).Store("<", F(1|Vararg, func(s *State) {
+		flag := true
+		for s.InType('n'); flag && !s.Args.Empty(); {
+			flag = s.LastIn().Num() < s.InType('n').Num()
+		}
+		s.Out = Bln(flag)
+	})).Store("<=", F(1|Vararg, func(s *State) {
+		flag := true
+		for s.InType('n'); flag && !s.Args.Empty(); {
+			flag = s.LastIn().Num() <= s.InType('n').Num()
+		}
+		s.Out = Bln(flag)
+	})).Store(">", F(1|Vararg|Macro, func(s *State) {
+		s.Out = Lst(Empty, s.Caller.Make("not"), Lst(s.Args, s.Caller.Make("<=")))
+	})).Store(">=", F(1|Vararg|Macro, func(s *State) {
+		s.Out = Lst(Empty, s.Caller.Make("not"), Lst(s.Args, s.Caller.Make("<")))
+	})).Store("not", F(1, func(s *State) {
+		s.Out = Bln(s.In().IsFalse())
+	})).Store("+", F(1|Vararg, func(s *State) {
+		switch s.Out = s.In(); s.Out.Type() {
+		case 'n':
+			vn := s.Out.Num()
+			for !s.Args.Empty() {
+				vn += s.InType('n').Num()
+			}
+			s.Out = Num(vn)
+		case 's':
+			vs := s.Out.Str()
+			for !s.Args.Empty() {
+				vs += s.InType('s').Str()
+			}
+			s.Out = Str(vs)
+		default:
+			panic(fmt.Errorf("can't apply 'add' on %v", s.Out))
+		}
+	})).Store("-", F(1|Vararg, func(s *State) {
+		a := s.InType('n').Num()
+		if s.Args.Empty() {
+			a = -a
+		}
+		for !s.Args.Empty() {
+			a -= s.InType('n').Num()
+		}
+		s.Out = Num(a)
+	})).Store("*", F(1|Vararg, func(s *State) {
+		a := s.InType('n').Num()
+		for !s.Args.Empty() {
+			a *= s.InType('n').Num()
+		}
+		s.Out = Num(a)
+	})).Store("/", F(1|Vararg, func(s *State) {
+		a := s.InType('n').Num()
+		for !s.Args.Empty() {
+			a /= s.InType('n').Num()
+		}
+		s.Out = Num(a)
+	})).Store("let", F(1|Vararg|Macro, func(s *State) {
+		var names, values []Value
+		s.InType('l').Lst().Range(func(pair Value) bool {
+			s.assert(pair.Type() == 'l' || s.panic("invalid binding list format: %v", pair))
+			p := pair.Lst()
+			s.assert(p.HasNext() && p.Val().Type() == 'y' && p.Val().Str() != "" || s.panic("invalid binding list format: %v", pair))
+			names, values = append(names, p.Val()), append(values, p.Next().Val())
+			return true
+		})
+		fn := Lst(Empty, s.Caller.Make("lambda"), Lst(Empty, names...), Lst(s.Args, s.Caller.Make("if"), Void, Void))
+		s.Out = Lst(Lst(Empty, values...).Lst(), fn)
+	})).Store("eval", F(1, func(s *State) {
+		s.Out = __exec(s.In(), execState{local: s.Context, curCaller: callerInfo{&Value{}, s.CallerLoc}})
+	})).Store("parse", F(1, func(s *State) {
+		x := s.InType('s').Str()
+		if _, err := os.Stat(x); err == nil {
+			buf, err := ioutil.ReadFile(x)
+			if err != nil {
+				s.Out = Val(err)
+			} else {
+				s.Out = ev2(s.Context.Parse(x, *(*string)(unsafe.Pointer(&buf))))
+			}
+		} else {
+			s.Out = ev2(s.Context.Parse("(parse)", x))
+		}
+	})).Store("set-car!", F(2, func(s *State) {
+		l := s.InType('l').Lst()
+		s.assert(!l.Empty() || s.panic("set-car!: empty list"))
+		l.SetVal(s.In())
+	})).Store("set-cdr!", F(2, func(s *State) {
+		l := s.InType('l').Lst()
+		s.assert(!l.Empty() || s.panic("set-cdr!: empty list"))
+		l.SetNext(s.InType('l').Lst())
+	})).Store("list", F(Vararg, func(s *State) {
+		s.Out = Lst(s.Args)
+	})).Store("append", F(2, func(s *State) {
+		s.Out = Lst(s.InType('l').Lst().Append(s.InType('l').Lst()))
+	})).Store("cons", F(2, func(s *State) {
+		s.Out = Lst(Cons(s.In(), s.In()))
+	})).Store("car", F(1, func(s *State) {
+		l := s.InType('l').Lst()
+		s.assert(!l.Empty() || s.panic("car: empty list"))
+		s.Out = l.Val()
+	})).Store("cdr", F(1, func(s *State) {
+		l := s.InType('l').Lst()
+		s.assert(!l.Empty() || s.panic("cdr: empty list"))
+		s.Out = Lst(l.Next())
+	})).Store("last", F(1, func(s *State) {
+		l := s.InType('l').Lst()
+		s.assert(!l.Empty() || s.panic("last: empty list"))
+		s.Out = l.Last().Val()
+	})).Store("init", F(1, func(s *State) {
+		l := s.InType('l').Lst()
+		s.assert(!l.Empty() || s.panic("init: empty list"))
+		s.Out = Lst(l.Take(-1))
+	})).Store("length", F(1, func(s *State) {
+		s.Out = Num(float64(s.InType('l').Lst().Len()))
+	})).Store("pcall", F(2, func(s *State) {
+		rc := s.In()
+		defer func() {
+			if r := recover(); r != nil {
+				if rc.Type() != 'f' {
+					s.Out = Val(r)
+				} else {
+					s.Out = ev2(rc.Fun().Call(Val(r)))
+				}
+			}
+		}()
+		s.Out = __exec(Lst(Empty, s.In().Quote()), execState{curCaller: callerInfo{&Value{}, new(string)}, local: s.Context})
+	})).Store("apply", F(2, func(s *State) {
+		expr := initlistbuilder().append(s.InType('f').Quote())
+		s.InType('l').Lst().Range(func(v Value) bool { expr = expr.append(v.Quote()); return true })
+		v, err := (*Context)(nil).Exec(expr.value())
+		s.assert(err == nil || s.panic("apply panic: %v", err))
+		s.Out = v
+	})).
+		Store("raise", F(1, func(s *State) { panic(s.In()) })).
+		Store("string->number", F(1, func(s *State) { s.Out = ev2(strconv.ParseFloat(s.InType('s').Str(), 64)) })).
+		Store("symbol->string", F(1, func(s *State) { s.Out = Str(s.InType('y').Str()) })).
+		Store("number->string", F(1, func(s *State) { s.Out = Str(strconv.FormatFloat(s.InType('n').Num(), 'f', -1, 64)) })).
+		Store("string->symbol", F(1, func(s *State) { s.Out = Sym(s.InType('s').Str(), 0, 0) })).
+		Store("string->error", F(1, func(s *State) { s.Out = Val(fmt.Errorf(s.InType('s').Str())) })).
+		Store("error?", F(1, func(s *State) { _, ok := s.In().Val().(error); s.Out = Bln(ok) })).
+		Store("null?", F(1, func(s *State) { s.Out = Bln(s.In().Type() == 'l' && s.LastIn().Lst().Empty()) })).
+		Store("list?", F(1, func(s *State) { s.Out = Bln(s.In().Type() == 'l' && s.LastIn().Lst().Proper()) })).
+		Store("void?", F(1, func(s *State) { s.Out = Bln(s.In() == Void) })).Store("pair?", _Ft('l')).Store("symbol?", _Ft('y')).Store("boolean?", _Ft('b')).Store("number?", _Ft('n')).Store("string?", _Ft('s')).
+		Store("stringify", F(1, func(s *State) { s.Out = Str(s.In().String()) }))
 	Default.Store("letrec", F(1|Vararg|Macro, func(s *State) {
 		/* Unwrap to:
 		(let ((var1 ()) ... (varn ())                  // outer binds

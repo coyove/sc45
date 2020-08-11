@@ -11,6 +11,7 @@ import (
 type dummy struct {
 	V struct {
 		V2 bool
+		V3 int
 	}
 }
 
@@ -19,6 +20,45 @@ func (d *dummy) M(v string, args ...string) string {
 		return v + strconv.FormatBool(d.V.V2)
 	}
 	return v + args[0]
+}
+
+func TestMarshal(t *testing.T) {
+	RegisterGoType(&dummy{})
+	RegisterGoType(dummy{})
+
+	it := New()
+	it.Store("pd", F(Macro, func(s *State) {
+		d := &dummy{}
+		d.V.V3 = 10
+		s.Out = Val(d)
+	}))
+	it.Store("d", F(Macro, func(s *State) {
+		d := dummy{}
+		d.V.V3 = 10
+		s.Out = Val(d)
+	}))
+
+	v, _ := it.Parse("", "(pd)")
+	buf, err := v.Marshal()
+	panicerr(err)
+	panicerr(v.Unmarshal(buf))
+	if d := v.Val().([]interface{})[3].(*dummy); d.V.V3 != 10 {
+		t.Fatal(d)
+	}
+	v, _ = it.Parse("", "(d)")
+	buf, err = v.Marshal()
+	panicerr(err)
+	panicerr(v.Unmarshal(buf))
+	if d := v.Val().([]interface{})[3].(dummy); d.V.V3 != 10 {
+		t.Fatal(d)
+	}
+	v, _ = it.Parse("", "(i64 10)")
+	buf, err = v.Marshal()
+	panicerr(err)
+	panicerr(v.Unmarshal(buf))
+	if d := v.Val().([]interface{})[3].(int64); d != 10 {
+		t.Fatal(d)
+	}
 }
 
 func TestOne(t *testing.T) {
