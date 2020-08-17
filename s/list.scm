@@ -31,4 +31,4 @@
 
   (assert (list-eq? '(2 3) ((lambda (a . r) r) 1 2 3)))
 
-
+(let ((a `(1 ,@3))) (assert (= (cdr a) 3)))

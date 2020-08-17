@@ -219,12 +219,16 @@ func init() {
 		s.Out = Lst(Cons(s.In(), s.In()))
 	})).Store("car", F(1, func(s *State) {
 		l := s.InType('l').Lst()
-		s.assert(!l.Empty() || s.panic("car: empty list"))
+		s.assert(l.testEmpty() != 't' || s.panic("car: empty list"))
 		s.Out = l.Val()
 	})).Store("cdr", F(1, func(s *State) {
-		l := s.InType('l').Lst()
-		s.assert(!l.Empty() || s.panic("cdr: empty list"))
-		s.Out = Lst(l.Next())
+		l := s.InType('l').Lst().Next()
+		s.assert(l != nil || s.panic("cdr: empty list"))
+		if l.testEmpty() == 'i' {
+			s.Out = l.Val()
+		} else {
+			s.Out = Lst(l)
+		}
 	})).Store("last", F(1, func(s *State) {
 		l := s.InType('l').Lst()
 		s.assert(!l.Empty() || s.panic("last: empty list"))

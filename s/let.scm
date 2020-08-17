@@ -14,11 +14,9 @@
 (define let*-native-match (lambda-syntax L
                                          (match L ()
                                                 ( (b* (s v)) body* ) (quasiquote 
-                                                                       (let*-native-match ,b (let ((,s ,v)) ,(cons 'begin body))))
+                                                                       (let*-native-match ,b (let ((,s ,v)) (begin ,@body))))
                                                 ( () body* ) (cons 'begin body)
                                                 )))
-
-
 (define flag ())
 (let*-native ((a 1) (b (+ a 1)) (c (+ b a))) (assert (= c 3)) (set! flag "let*-native"))
 (assert (= flag "let*-native"))

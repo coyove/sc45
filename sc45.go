@@ -69,7 +69,6 @@ type (
 		assertable
 		debug     debugInfo
 		local     *Context
-		quasi     bool
 		macroMode bool
 	}
 	assertable struct{ err error }
@@ -93,7 +92,8 @@ func (f *Func) String() string {
 	if f.n == Void {
 		return ifstr(f.nvar_or_fname == "#v", "/*missing native code*/", f.nvar_or_fname+" /*native code*/")
 	}
-	return ifstr(f.macro, "(lambda-syntax (", "(lambda (") + strings.Join(f.nargs, " ") + ifstr(f.nvar_or_fname != "", " . "+f.nvar_or_fname, "") + ") " + f.n.String() + ")"
+	return ifstr(f.macro, "(lambda-syntax (", "(lambda (") + strings.Join(f.nargs, " ") + ifstr(f.nvar_or_fname != "", " . "+f.nvar_or_fname, "") + ") " +
+		f.n.String() + ")" + ifstr(f.wrapper, " #|wrapper|#", "")
 }
 
 // In pops an argument
@@ -166,25 +166,37 @@ func (ctx *Context) Copy() *Context {
 	return m2
 }
 
-func __exec(expr Value, state execState) Value {
-	if state.quasi {
-		if expr.Type() == 'l' && !expr.Lst().Empty() {
-			lst := expr.Lst()
-			if x := lst.Val(); x.Type() == 'y' && x.Str() == "unquote" {
+func __execQuasi(expr Value, state execState) (Value, *Pair) {
+	if expr.Type() == 'l' && !expr.Lst().Empty() {
+		lst := expr.Lst()
+		if x := lst.Val(); x.Type() == 'y' {
+			switch x.Str() {
+			case "unquote":
 				state.assert(lst.HasNext() || state.panic("invalid unquote syntax"))
-				state.quasi = false
+				return __exec(lst.Next().Val(), state), nil
+			case "unquote-splicing":
+				state.assert(lst.HasNext() || state.panic("invalid unquote-splicing syntax"))
 				v := __exec(lst.Next().Val(), state)
-				return v
+				if v.Type() == 'l' {
+					return Void, v.Lst()
+				}
+				return Void, (&Pair{}).SetVal(v)
 			}
-			results := initlistbuilder()
-			for ; !lst.Empty(); lst = lst.Next() {
-				results = results.append(__exec(lst.Val(), state))
-			}
-			return results.value()
 		}
-		return expr
+		results := initlistbuilder()
+		for ; !lst.Empty(); lst = lst.Next() {
+			if v, p := __execQuasi(lst.Val(), state); p != nil {
+				*results.p = *p
+			} else {
+				results = results.append(v)
+			}
+		}
+		return results.value(), nil
 	}
+	return expr, nil
+}
 
+func __exec(expr Value, state execState) Value {
 TAIL_CALL:
 	switch expr.Type() {
 	case 'y':
@@ -276,8 +288,10 @@ TAIL_CALL:
 			return c.Val()
 		case "quasiquote":
 			state.assert(c.MoveNext(&c) || state.panic("invalid quasiquote syntax"))
-			state.quasi = true
-			v := __exec(c.Val(), state)
+			v, p := __execQuasi(c.Val(), state)
+			if p != nil {
+				return Lst(p)
+			}
 			return v
 		case "unquote":
 			panic(fmt.Errorf("unquote outside quasiquote"))
@@ -404,12 +418,12 @@ func (ctx *Context) RunFile(path string) (result Value, err error) {
 	if err != nil {
 		return Void, err
 	}
-	buf, err = c.Lst().Val().Fun().n.Marshal()
-	panicerr(err)
-	{
-		c := Void
-		fmt.Println(c.Unmarshal(buf))
-	}
+	// buf, err = c.Lst().Val().Fun().n.Marshal()
+	// panicerr(err)
+	// {
+	// 	c := Void
+	// 	fmt.Println(c.Unmarshal(buf))
+	// }
 	return ctx.Exec(c)
 }
 
@@ -483,10 +497,19 @@ LOOP:
 			s := s.Scan()
 			ctx.assert(s == scanner.EOF || s == ']' || s == ')' || ctx.panic("invalid dot syntax"))
 			return comp.value()
-		case '\'', '`', ',':
+		case '\'', '`':
 			c := ctx.scan(s, true)
-			ctx.assert(c != Void || ctx.panic("invalid *quote syntax"))
-			comp = comp.append(Lst(Empty, Sym(ifstr(tok == '\'', "quote", ifstr(tok == '`', "quasiquote", "unquote")), 0, 0), c))
+			ctx.assert(c != Void || ctx.panic("invalid quote syntax"))
+			comp = comp.append(Lst(Empty, Sym(ifstr(tok == '\'', "quote", "quasiquote"), 0, 0), c))
+		case ',':
+			sp := false
+			if s.Peek() == '@' {
+				s.Scan()
+				sp = true
+			}
+			c := ctx.scan(s, true)
+			ctx.assert(c != Void || ctx.panic("invalid unquote syntax"))
+			comp = comp.append(Lst(Empty, Sym(ifstr(sp, "unquote-splicing", "unquote"), 0, 0), c))
 		default:
 			text := s.TokenText() + scanToDelim(s)
 			if v, ok := strconv.ParseInt(text, 0, 64); ok == nil || tok == scanner.Int {
@@ -788,6 +811,9 @@ func initlistbuilder() listbuilder {
 	return b
 }
 func (b listbuilder) append(v Value) listbuilder {
+	if !b.p._empty {
+		panic("append to improper list")
+	}
 	b.p.SetVal(v).SetNext(&Pair{_empty: true})._empty = false
 	b.p = b.p.Next()
 	b.count++

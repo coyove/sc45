@@ -67,7 +67,7 @@ func TestOne(t *testing.T) {
 	it := New()
 	assert := func(v string) {
 		r, err := it.RunFile(v)
-		if err != nil {
+		if err != nil && strings.HasPrefix(v, "(") {
 			r, err = it.Run(v)
 		}
 		if err != nil {
