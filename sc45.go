@@ -57,20 +57,24 @@ type (
 		arglast     Value
 		Args        *Pair
 		Out, Caller Value
-		Debug       debugInfo
+		Debug       *Stack
 	}
 	Context struct {
 		assertable
 		parent *Context
 		m      map[string]Value
 	}
-	debugInfo struct {
-		K *Value
-		L *string
+	frame struct {
+		K   Value
+		Loc string
+	}
+	Stack struct {
+		nextLocation string
+		K            []frame
 	}
 	execState struct {
 		assertable
-		debug     debugInfo
+		debug     *Stack
 		local     *Context
 		macroMode bool
 	}
@@ -80,7 +84,39 @@ type (
 func New() *Context { return Default.Copy() }
 
 func NewFunc(minArgsFlag int, f func(*State)) Value {
-	return F(&Func{f: f, fvars: minArgsFlag & 0xffff, fvar: minArgsFlag&Vararg != 0, macro: minArgsFlag&Macro != 0})
+	return F(&Func{f: f, fvars: minArgsFlag & 0xffff, fvar: minArgsFlag&Vararg != 0, macro: minArgsFlag&Macro != 0, location: "(builtin)"})
+}
+
+func (s *Stack) popAndReturn(v Value) Value {
+	s.nextLocation = s.K[len(s.K)-1].Loc
+	s.K = s.K[:len(s.K)-1]
+	return v
+}
+func (s *Stack) push(k Value, tail bool) {
+	if !tail {
+		s.K = append(s.K, frame{K: k, Loc: s.nextLocation})
+		return
+	}
+	s.K[len(s.K)-1].K = k
+	s.K[len(s.K)-1].Loc = s.nextLocation
+}
+func (s *Stack) StackLocations(includeBuiltin bool) (locs []string) {
+	for _, k := range s.K {
+		if k.Loc != "(builtin)" || includeBuiltin {
+			locs = append(locs, k.Loc)
+		}
+	}
+	return locs
+}
+func (s *Stack) CurrentLocation() string { return s.K[len(s.K)-1].Loc }
+func (s *Stack) setnextloc(loc string)   { s.nextLocation = loc }
+func (s *Stack) String() (p string) {
+	for _, k := range s.K {
+		if sym := k.K.findSym(); sym != Void && sym.LineInfo() > 0 {
+			p = sym.S() + " in " + k.Loc + ":" + strconv.FormatInt(int64(sym.LineInfo()), 10) + "\n" + p
+		}
+	}
+	return strings.TrimSpace(p)
 }
 
 func (f *Func) Call(a ...Value) (Value, error) {
@@ -200,14 +236,21 @@ func __execQuasi(expr Value, state execState) (Value, *Pair) {
 }
 
 func __exec(expr Value, state execState) Value {
+	tailCall := false
 TAIL_CALL:
 	switch expr.Type() {
 	case SYM:
 		v, ok := state.local.Load(expr.S())
 		state.assert(ok || state.panic("unbound %v", expr))
+		if tailCall {
+			return state.debug.popAndReturn(v)
+		}
 		return v
 	case LIST: // evaluating the list
 	default:
+		if tailCall {
+			return state.debug.popAndReturn(expr)
+		}
 		return expr
 	}
 
@@ -217,28 +260,30 @@ TAIL_CALL:
 	}
 
 	head := c.Val()
-	if *state.debug.K = c.Val(); state.debug.K.Type() == SYM {
-		switch va := state.debug.K.S(); va {
+	state.debug.push(head, tailCall)
+
+	if head.Type() == SYM {
+		switch va := head.S(); va {
 		case "if":
 			state.assert(c.MoveProNext(&c) || state.panic("invalid if syntax, missing condition"))
 			if !__exec(c.Val(), state).IsFalse() {
 				state.assert(c.MoveProNext(&c) || state.panic("invalid if syntax, missing true branch"))
-				expr = c.Val() // execute true-branch
+				expr, tailCall = c.Val(), true // execute true-branch
 				goto TAIL_CALL
 			}
 			c.MoveProNext(&c)                        // skip condition
 			c.MoveProNext(&c)                        // skip true branch
 			for ; !c.ProEmpty(); c.MoveProNext(&c) { // execute rest statements: (if cond true-branch false-1 ... false-n)
 				if !c.HasProNext() {
-					expr = c.Val()
+					expr, tailCall = c.Val(), true
 					goto TAIL_CALL
 				}
 				__exec(c.Val(), state)
 			}
-			return Void
+			return state.debug.popAndReturn(Void)
 		case "lambda", "lambda-syntax":
 			state.assert(c.MoveProNext(&c) || state.panic("invalid lambda* syntax, missing parameters"))
-			f := &Func{cls: state.local, macro: va != "lambda", location: *state.debug.L}
+			f := &Func{cls: state.local, macro: va != "lambda", location: state.debug.CurrentLocation()}
 			switch c.Val().Type() {
 			case SYM: // (lambda* args body)
 				f.nvar_or_fname = c.Val().S()
@@ -257,9 +302,9 @@ TAIL_CALL:
 			}
 			state.assert(c.MoveProNext(&c) || state.panic("invalid lambda syntax, missing lambda body"))
 			if f.n = c.Val(); c.HasProNext() {
-				f.n = L(c, state.debug.K.Y("if"), Void, Void)
+				f.n = L(c, Y("if", 0), Void, Void)
 			}
-			return F(f)
+			return state.debug.popAndReturn(F(f))
 		case "match":
 			state.assert(c.MoveProNext(&c) || state.panic("invalid match syntax, missing source"))
 			source := __exec(c.Val(), state)
@@ -279,22 +324,22 @@ TAIL_CALL:
 			}
 			m := &Context{parent: state.local, m: map[string]Value{}}
 			if source.L().match(state, pattern, false, symbolmap, m.m) {
-				return __exec(c.Val(), execState{debug: state.debug, local: m})
+				return state.debug.popAndReturn(__exec(c.Val(), execState{debug: state.debug, local: m}))
 			}
 			if c.HasProNext() {
 				goto MATCH_NEXT
 			}
-			return Void
+			return state.debug.popAndReturn(Void)
 		case "quote":
 			state.assert(c.MoveProNext(&c) || state.panic("invalid quote syntax"))
-			return c.Val()
+			return state.debug.popAndReturn(c.Val())
 		case "quasiquote":
 			state.assert(c.MoveProNext(&c) || state.panic("invalid quasiquote syntax"))
 			v, p := __execQuasi(c.Val(), state)
 			if p != nil {
-				return L(p)
+				return state.debug.popAndReturn(L(p))
 			}
-			return v
+			return state.debug.popAndReturn(v)
 		case "unquote", "unquote-splicing":
 			panic(fmt.Errorf("unquote outside quasiquote"))
 		case "set!":
@@ -304,7 +349,7 @@ TAIL_CALL:
 			state.assert(m != nil || state.panic("set!: unbound %s", x))
 			state.assert(c.MoveProNext(&c) || state.panic("invalid set! syntax, missing bound value"))
 			m.set(x, __exec(c.Val(), state))
-			return Void
+			return state.debug.popAndReturn(Void)
 		case "define":
 			switch c.MoveProNext(&c); c.Val().Type() {
 			case SYM:
@@ -317,22 +362,22 @@ TAIL_CALL:
 				state.assert(!lst.ProEmpty() || state.panic("invalid define syntax, missing function name")).
 					assert(c.MoveProNext(&c) || state.panic("invalid define syntax, missing bound value"))
 				s := L(Empty, head.Y("define"), lst.Val(), L(c, head.Y("lambda"), L(lst.Next())))
-				return __exec(s, state)
+				__exec(s, state)
 			default:
 				panic("invalid define syntax, missing binding symbol")
 			}
-			return Void
+			return state.debug.popAndReturn(Void)
 		}
 	}
 
 	fn := __exec(head, state)
 	state.assert(fn.Type() == FUNC || state.panic("invalid function: %v", head))
 	cc := fn.F()
+	state.debug.setnextloc(cc.location)
 
-	oldLoc := *state.debug.L
 	if cc.f == nil {
 		if cc.macro && !state.macroMode {
-			return __exec(state.local.unwrapMacro(expr, false), state)
+			return state.debug.popAndReturn(__exec(state.local.unwrapMacro(expr, false, state.debug), state))
 		}
 		m := &Context{parent: cc.cls}
 		for i, name := range cc.nargs {
@@ -344,28 +389,20 @@ TAIL_CALL:
 			c.Next().ProRange(func(v Value) bool { values = values.Append(__exec(v, state)); return true })
 			m.set(cc.nvar_or_fname, values.Build())
 		}
-		if *state.debug.L == cc.location {
-			*state.debug.K, state.local, expr = head, m, cc.n
-			goto TAIL_CALL
-		}
-		*state.debug.L, state.local = cc.location, m
-		v := __exec(cc.n, state)
-		*state.debug.L = oldLoc
-		return v
+		state.local, expr, tailCall = m, cc.n, true
+		goto TAIL_CALL
 	}
 
 	s := State{Context: state.local, Out: Void, Caller: head, Debug: state.debug}
 	args := InitListBuilder()
 	c.Next().ProRange(func(v Value) bool { args = args.Append(__exec(v, state)); return true })
 
-	*state.debug.K = head
 	state.assert(args.Len == cc.fvars || (cc.fvar && args.Len >= cc.fvars) ||
 		state.panic("call: expect "+ifstr(cc.fvar, "at least ", "")+strconv.Itoa(cc.fvars)+" arguments"))
 
 	s.Args = args.head
 	cc.f(&s)
-	*state.debug.L = oldLoc
-	return s.Out
+	return state.debug.popAndReturn(s.Out)
 }
 
 func (ctx *Context) Parse(filename, text string) (expr Value, err error) {
@@ -378,17 +415,23 @@ func (ctx *Context) Parse(filename, text string) (expr Value, err error) {
 		}
 		err = fmt.Errorf("parse: %s at %s:%d:%d", msg, filename, pos.Line, pos.Column)
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("parse: %v at %s:%d:%d", r, filename, s.Pos().Line, s.Pos().Column)
-		}
+
+	v := func() Value {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("parse: %v at %s:%d:%d", r, filename, s.Pos().Line, s.Pos().Column)
+			}
+		}()
+		return ctx.scan(s, false)
 	}()
-	v := ctx.scan(s, false)
 	if err != nil {
 		return Void, err
 	}
 
-	v = ctx.unwrapMacro(v, false)
+	dbg := &Stack{nextLocation: "(toplevel)"}
+	defer debugCatch(dbg, &err)
+
+	v = ctx.unwrapMacro(v, false, dbg)
 	if v.Type() == LIST {
 		v = L(v.L(), Y("if", 0), Void, Void)
 	} else {
@@ -398,16 +441,18 @@ func (ctx *Context) Parse(filename, text string) (expr Value, err error) {
 	return L(Empty, v), nil
 }
 
-func (ctx *Context) Exec(c Value) (output Value, err error) {
-	var dbg = debugInfo{new(Value), new(string)}
-	defer func() {
-		if r := recover(); r != nil {
-			if os.Getenv("SBD_STACK") != "" {
-				fmt.Println(string(debug.Stack()))
-			}
-			err = fmt.Errorf("%v at %v (%s)", r, *dbg.K, *dbg.L)
+func debugCatch(dbg *Stack, err *error) {
+	if r := recover(); r != nil {
+		if os.Getenv("SC_STACK") != "" {
+			fmt.Println(string(debug.Stack()))
 		}
-	}()
+		*err = fmt.Errorf("%v at %v", r, dbg)
+	}
+}
+
+func (ctx *Context) Exec(c Value) (output Value, err error) {
+	dbg := &Stack{nextLocation: "(toplevel)"}
+	defer debugCatch(dbg, &err)
 	return __exec(c, execState{local: ctx, debug: dbg}), nil
 }
 
@@ -529,7 +574,7 @@ LOOP:
 	return comp.Build()
 }
 
-func (ctx *Context) unwrapMacro(v Value, quasi bool) Value {
+func (ctx *Context) unwrapMacro(v Value, quasi bool, stack *Stack) Value {
 	if v.Type() != LIST || v.L().Empty() {
 		return v
 	}
@@ -550,10 +595,10 @@ func (ctx *Context) unwrapMacro(v Value, quasi bool) Value {
 			if m, _ := ctx.Load(head.S()); m.Type() == FUNC && m.F().macro {
 				args := InitListBuilder().Append(head)
 				for comp.MoveProNext(&comp); !comp.ProEmpty(); comp.MoveProNext(&comp) {
-					args = args.Append(ctx.unwrapMacro(comp.Val(), false).Quote())
+					args = args.Append(ctx.unwrapMacro(comp.Val(), false, stack).Quote())
 				}
-				v := __exec(args.Build(), execState{local: ctx, debug: debugInfo{&Value{}, new(string)}, macroMode: true})
-				return ctx.unwrapMacro(v, false)
+				v := __exec(args.Build(), execState{local: ctx, debug: stack, macroMode: true})
+				return ctx.unwrapMacro(v, false, stack)
 			}
 		}
 	}
@@ -562,7 +607,7 @@ func (ctx *Context) unwrapMacro(v Value, quasi bool) Value {
 		if comp.Empty() {
 			break
 		}
-		comp.setVal(ctx.unwrapMacro(comp.Val(), quasi))
+		comp.setVal(ctx.unwrapMacro(comp.Val(), quasi, stack))
 	}
 	return L(old)
 }
@@ -744,6 +789,14 @@ func (v Value) Equals(v2 Value) bool {
 		}
 	}
 	return false
+}
+func (v Value) findSym() Value {
+	if t := v.Type(); t == SYM {
+		return v
+	} else if t == LIST {
+		return v.L().Val().findSym()
+	}
+	return Void
 }
 func (v Value) F() *Func                  { return (*Func)(v.ptr) }
 func (v Value) B() bool                   { return v.val == 2 }

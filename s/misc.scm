@@ -3,7 +3,7 @@
                                                                           (if (== false (cb (car s) idx )) ()
                                                                             (ForeachImpl (cdr s) cb (+ idx 1)))))))] (ForeachImpl s cb 0)))) ;;
 
-;; (define Counter 0) (Foreach (make/list 1000000) (lambda (v) (begin (set! Counter (+ Counter 1)) (assert (== Counter v
+;; (define Counter 0) (Foreach (make/list 1000000) (lambda (v) (begin (set! Counter (+ Counter 1)) (assert (== Counter v)))))
 (define StringSplit
   (lambda (S Sep) (begin
                     (define First-occur -1)

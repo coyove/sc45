@@ -75,13 +75,16 @@ func TestOne(t *testing.T) {
 		}
 		log.Println(v, "===>", r)
 	}
+	_ = assert
 	it.Store("assert", NewFunc(1, func(s *State) {
 		if s.In().IsFalse() {
 			panic(fmt.Errorf("assertion failed"))
 		}
 	}))
 	it.Store("current-location", NewFunc(0, func(s *State) {
-		s.Out = S(*s.Debug.L)
+		locs := s.Debug.StackLocations(false)
+		fmt.Println(locs)
+		s.Out = S(locs[len(locs)-1])
 	}))
 	it.Store("test/struct-gen", NewFunc(1, func(s *State) {
 		if s.In().IsFalse() {
@@ -132,31 +135,32 @@ func TestOne(t *testing.T) {
 		s.Out = s.In()
 	}))
 
+	// assert("s/fib.scm")
 	assert("s/basic.scm")
 	assert("s/match.scm")
 	assert("s/let.scm")
 	assert("s/list.scm")
-	assert("s/fib.scm")
 	assert("s/misc.scm")
 
-	assert(`(define foo (eval (parse "s/module.scm")))
-	(eval '(foo (lambda () (display (current-location)) (assert (substring? (current-location) "memory")) )))`)
+	// assert(`(define foo (eval (parse "s/module.scm")))
+	// (eval '(foo (lambda () (display (current-location)) (assert (substring? (current-location) "memory")) )))`)
+
+	// {
+	// 	_, err := it.Run(`(define foo (eval (parse "s/module.scm"))) (eval '(foo 99))`)
+	// 	if !strings.Contains(err.Error(), "(s/module.scm)") {
+	// 		t.Fatal(err)
+	// 	}
+	// }
 
 	{
-		_, err := it.Run(`(define foo (eval (parse "s/module.scm"))) (eval '(foo 99))`)
-		if !strings.Contains(err.Error(), "(s/module.scm)") {
+		_, err := it.Run(`(define foo (eval (parse "s/module.scm"))) 
+(define m# (lambda-syntax whatever (foo 10)))
+(m#)
+		`)
+		if !strings.Contains(err.Error(), "s/module.scm") {
 			t.Fatal(err)
 		}
 	}
-
-	// 	assert(`(assert (= "true" (cond
-	// 			((= 1 2)     (assert false))
-	// 			((> "a" "b") (assert false))
-	// 			(true        "true"`)
-	// 	assert(`(cond
-	// 			((= 1 2)  (assert false))
-	// 			(else     (assert true))
-	// 			(true     (assert false)`)
 
 }
 
@@ -172,6 +176,6 @@ func TestLaunchWeb(t *testing.T) {
 	if os.Getenv("WEB") != "" {
 		it := New()
 		it.InjectDebugPProfREPL("debug")
-		http.ListenAndServe(":8080", nil)
+		http.ListenAndServe("127.0.0.1:8080", nil)
 	}
 }
