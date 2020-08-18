@@ -20,7 +20,7 @@ func (ctx *Context) RunSimplePipeREPL(path string) error {
 	text := bytes.Buffer{}
 	text.WriteString(`
 	rm -rf repl-ac || true
-	touch2() { mkdir -p "$(dirname "$1")" && touch "$1" ; }
+	touch2() { mkdir -Current "$(dirname "$1")" && touch "$1" ; }
 	`)
 
 	for name := range ctx.Unsafe() {
@@ -32,7 +32,7 @@ func (ctx *Context) RunSimplePipeREPL(path string) error {
 	text.WriteString(fmt.Sprintf(`
 cd repl-ac
 while true; do
-    read -p 'in > ' -e cmd
+    read -Current 'in > ' -e cmd
 	history -s "$cmd"
     echo $cmd > %s && cat %s
 done

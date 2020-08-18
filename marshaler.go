@@ -40,9 +40,9 @@ func (v Value) Marshal() (buf []byte, err error) {
 		}
 	}()
 	p := &bytes.Buffer{}
-	if v.Type() == 'l' && !v.Lst()._empty && v.Lst().Next() == Empty {
-		if v2 := v.Lst().Val(); v2.Type() == 'f' && v2.Fun().wrapper {
-			v = v2.Fun().n
+	if v.Type() == 'l' && !v.L()._empty && v.L().Next() == Empty {
+		if v2 := v.L().Val(); v2.Type() == 'f' && v2.F().wrapper {
+			v = v2.F().n
 		}
 	}
 	v.marshal(p)
@@ -73,7 +73,7 @@ func (v Value) marshal(p *bytes.Buffer) {
 
 	switch v.Type() {
 	case 'n':
-		if v := v.Num(); float64(int64(v)) == v {
+		if v := v.N(); float64(int64(v)) == v {
 			p.WriteByte('N')
 			var tmp [10]byte
 			n := binary.PutVarint(tmp[:], int64(v))
@@ -84,17 +84,16 @@ func (v Value) marshal(p *bytes.Buffer) {
 		}
 	case 'y':
 		p.WriteByte('y')
-		line, col := v.Pos()
 		var tmp [10]byte
-		n := binary.PutUvarint(tmp[:], uint64(line)<<32|uint64(col))
+		n := binary.PutVarint(tmp[:], int64(v.LineInfo()))
 		p.Write(tmp[:n])
 		fallthrough
 	case 's':
 		p.WriteByte('s')
-		writeString(p, v.Str())
+		writeString(p, v.S())
 	case 'l':
 		p.WriteByte('l')
-		vl := v.Lst()
+		vl := v.L()
 		for vl != nil && !vl._empty {
 			if vl.Next() == nil {
 				p.WriteByte(0)
@@ -106,11 +105,15 @@ func (v Value) marshal(p *bytes.Buffer) {
 		}
 		p.WriteByte('L')
 	case 'b':
-		p.WriteByte(ifbyte(v.Bln(), 'B', 'b'))
+		if v.B() {
+			p.WriteByte('B')
+		} else {
+			p.WriteByte('b')
+		}
 	case 'f':
 		panic(fmt.Errorf("function cannot be marshalled"))
 	case 'i':
-		i := v.Val()
+		i := v.V()
 		t := reflect.TypeOf(i)
 		if goTypesRegRev[t] == 0 {
 			panic(fmt.Errorf("marshal: %v is not registered", t))
@@ -133,30 +136,29 @@ func (v *Value) unmarshal(p interface {
 	case 'n':
 		var v2 float64
 		panicerr(binary.Read(p, binary.BigEndian, &v2))
-		*v = Num(v2)
+		*v = N(v2)
 	case 'N':
 		v2, err := binary.ReadVarint(p)
 		panicerr(err)
-		*v = Num(float64(v2))
+		*v = N(float64(v2))
 	case 'y':
-		tmp64, err := binary.ReadUvarint(p)
+		line, err := binary.ReadVarint(p)
 		panicerr(err)
-		line, col := uint32(tmp64>>32), uint32(tmp64)
 		var v2 Value
 		v2.unmarshal(p)
 		if v2.Type() != 's' {
 			panic(fmt.Errorf("invalid symbol binary data"))
 		}
-		*v = Sym(v2.Str(), int(line), int(col))
+		*v = Sy(v2.S(), uint32(line))
 	case 's':
 		ln, err := binary.ReadVarint(p)
 		panicerr(err)
 		var buf = make([]byte, ln)
 		_, err = p.Read(buf)
 		panicerr(err)
-		*v = Str(*(*string)(unsafe.Pointer(&buf)))
+		*v = S(*(*string)(unsafe.Pointer(&buf)))
 	case 'l':
-		vl := initlistbuilder()
+		vl := InitListBuilder()
 	LOOP:
 		for {
 			var tag byte
@@ -165,18 +167,18 @@ func (v *Value) unmarshal(p interface {
 			switch tag {
 			case 1:
 				v2.unmarshal(p)
-				vl = vl.append(v2)
+				vl = vl.Append(v2)
 			case 0:
 				v2.unmarshal(p)
-				vl.p.SetVal(v2)._empty = false
+				vl.Current.setVal(v2)._empty = false
 				break LOOP
 			case 'L':
 				break LOOP
 			}
 		}
-		*v = vl.value()
+		*v = vl.Build()
 	case 'b', 'B':
-		*v = Bln(tag == 'B')
+		*v = B(tag == 'B')
 	case 'f':
 		panic(fmt.Errorf("unmarshaler: impossible case"))
 	case 'i':
@@ -190,11 +192,11 @@ func (v *Value) unmarshal(p interface {
 		if rt.Kind() == reflect.Ptr {
 			rv := reflect.New(rt.Elem())
 			panicerr(gob.NewDecoder(p).Decode(rv.Interface()))
-			*v = Val(rv.Interface())
+			*v = V(rv.Interface())
 		} else {
 			rv := reflect.New(rt)
 			panicerr(gob.NewDecoder(p).Decode(rv.Interface()))
-			*v = Val(rv.Elem().Interface())
+			*v = V(rv.Elem().Interface())
 		}
 	default:
 		*v = Void

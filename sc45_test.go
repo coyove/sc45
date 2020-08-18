@@ -29,36 +29,36 @@ func TestMarshal(t *testing.T) {
 	RegisterGoType(dummy{})
 
 	it := New()
-	it.Store("pd", F(Macro, func(s *State) {
+	it.Store("pd", NewFunc(Macro, func(s *State) {
 		d := &dummy{}
 		d.V.V3 = 10
-		s.Out = Val(d)
+		s.Out = V(d)
 	}))
-	it.Store("d", F(Macro, func(s *State) {
+	it.Store("d", NewFunc(Macro, func(s *State) {
 		d := dummy{}
 		d.V.V3 = 10
-		s.Out = Val(d)
+		s.Out = V(d)
 	}))
 
 	v, _ := it.Parse("", "(pd)")
 	buf, err := v.Marshal()
 	panicerr(err)
 	panicerr(v.Unmarshal(buf))
-	if d := v.Val().([]interface{})[3].(*dummy); d.V.V3 != 10 {
+	if d := v.V().([]interface{})[3].(*dummy); d.V.V3 != 10 {
 		t.Fatal(d)
 	}
 	v, _ = it.Parse("", "(d)")
 	buf, err = v.Marshal()
 	panicerr(err)
 	panicerr(v.Unmarshal(buf))
-	if d := v.Val().([]interface{})[3].(dummy); d.V.V3 != 10 {
+	if d := v.V().([]interface{})[3].(dummy); d.V.V3 != 10 {
 		t.Fatal(d)
 	}
 	v, _ = it.Parse("", "(i64 10)")
 	buf, err = v.Marshal()
 	panicerr(err)
 	panicerr(v.Unmarshal(buf))
-	if d := v.Val().([]interface{})[3].(int64); d != 10 {
+	if d := v.V().([]interface{})[3].(int64); d != 10 {
 		t.Fatal(d)
 	}
 }
@@ -75,22 +75,22 @@ func TestOne(t *testing.T) {
 		}
 		log.Println(v, "===>", r)
 	}
-	it.Store("assert", F(1, func(s *State) {
+	it.Store("assert", NewFunc(1, func(s *State) {
 		if s.In().IsFalse() {
 			panic(fmt.Errorf("assertion failed"))
 		}
 	}))
-	it.Store("current-location", F(0, func(s *State) {
-		s.Out = Str(*s.Debug.L)
+	it.Store("current-location", NewFunc(0, func(s *State) {
+		s.Out = S(*s.Debug.L)
 	}))
-	it.Store("test/struct-gen", F(1, func(s *State) {
+	it.Store("test/struct-gen", NewFunc(1, func(s *State) {
 		if s.In().IsFalse() {
-			s.Out = Val((*dummy)(nil))
+			s.Out = V((*dummy)(nil))
 			return
 		}
 		d := &dummy{}
 		d.V.V2 = true
-		s.Out = Val(d)
+		s.Out = V(d)
 		return
 	}))
 	it.Store("make/vararg", Fgo(func(v ...interface{}) []interface{} { return v }))
@@ -101,33 +101,33 @@ func TestOne(t *testing.T) {
 		}
 		return a
 	}))
-	it.Store("make/bytes", F(1, func(s *State) {
-		n := s.In().Val()
+	it.Store("make/bytes", NewFunc(1, func(s *State) {
+		n := s.In().V()
 		l := make([]byte, n.(int64))
 		for i := 0; i < len(l); i++ {
 			l[i] = byte(i) + 1
 		}
-		s.Out = Val(l)
+		s.Out = V(l)
 	}))
-	it.Store("make/list", F(1, func(s *State) {
-		l := make([]Value, int(s.InType('n').Num()))
+	it.Store("make/list", NewFunc(1, func(s *State) {
+		l := make([]Value, int(s.InType('n').N()))
 		for i := 0; i < len(l); i++ {
-			l[i] = Num(float64(i) + 1)
+			l[i] = N(float64(i) + 1)
 		}
-		s.Out = Lst(Empty, l...)
+		s.Out = L(Empty, l...)
 	}))
-	it.Store("range", F(2, func(s *State) {
+	it.Store("range", NewFunc(2, func(s *State) {
 		m := s.InMap()
 		f := s.InType('f')
 		for k, v := range m {
-			err, _ := f.Fun().Call(Str(k), v)
+			err, _ := f.F().Call(S(k), v)
 			if err.IsFalse() {
 				s.Out = v
 				return
 			}
 		}
 	}))
-	it.Store("iff", F(2|Macro, func(s *State) {
+	it.Store("iff", NewFunc(2|Macro, func(s *State) {
 		s.In()
 		s.Out = s.In()
 	}))
