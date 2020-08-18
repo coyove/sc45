@@ -44,7 +44,7 @@ func (ctx *Context) String() string {
 	return p.String()
 }
 
-func Fgo(fn interface{}) Value {
+func NewGoFunc(fn interface{}) Value {
 	var ctx assertable
 	rf, rt := reflect.ValueOf(fn), reflect.TypeOf(fn)
 	ctx.assert(rf.Kind() == reflect.Func || ctx.panic("not func"))
@@ -97,14 +97,14 @@ func _Ft(t ValueType) Value { return NewFunc(1, func(s *State) { s.Out = B(s.In(
 
 func init() {
 	Default.Store("true", B(true)).Store("false", B(false)).Store("begin", NewFunc(Macro|Vararg, func(s *State) {
-		s.Out = L(s.Args, Sy2("if", s.Caller), Void, Void)
+		s.Out = L(s.Args, s.Caller.Y("if"), Void, Void)
 	})).Store("and", NewFunc(Macro|Vararg, func(s *State) {
 		if s.Args.ProEmpty() {
 			s.Out = B(true)
 		} else if !s.Args.HasProNext() {
 			s.Out = s.In()
 		} else {
-			s.Out = L(Empty, Sy2("if", s.Caller), s.In(), L(s.Args, Sy2("and", s.Caller)), B(false))
+			s.Out = L(Empty, s.Caller.Y("if"), s.In(), L(s.Args, s.Caller.Y("and")), B(false))
 		}
 	})).Store("or", NewFunc(Macro|Vararg, func(s *State) {
 		if s.Args.ProEmpty() {
@@ -112,7 +112,7 @@ func init() {
 		} else if !s.Args.HasProNext() {
 			s.Out = s.In()
 		} else {
-			s.Out = L(Empty, Sy2("if", s.Caller), s.In(), B(true), L(s.Args, Sy2("or", s.Caller)))
+			s.Out = L(Empty, s.Caller.Y("if"), s.In(), B(true), L(s.Args, s.Caller.Y("or")))
 		}
 	})).Store("==", NewFunc(1|Vararg, func(s *State) {
 		flag := true
@@ -135,9 +135,9 @@ func init() {
 		}
 		s.Out = B(flag)
 	})).Store(">", NewFunc(1|Vararg|Macro, func(s *State) {
-		s.Out = L(Empty, Sy2("not", s.Caller), L(s.Args, Sy2("<=", s.Caller)))
+		s.Out = L(Empty, s.Caller.Y("not"), L(s.Args, s.Caller.Y("<=")))
 	})).Store(">=", NewFunc(1|Vararg|Macro, func(s *State) {
-		s.Out = L(Empty, Sy2("not", s.Caller), L(s.Args, Sy2("<", s.Caller)))
+		s.Out = L(Empty, s.Caller.Y("not"), L(s.Args, s.Caller.Y("<")))
 	})).Store("not", NewFunc(1, func(s *State) {
 		s.Out = B(s.In().IsFalse())
 	})).Store("+", NewFunc(1|Vararg, func(s *State) {
@@ -180,14 +180,14 @@ func init() {
 		s.Out = N(a)
 	})).Store("let", NewFunc(1|Vararg|Macro, func(s *State) {
 		var names, values []Value
-		s.InType('l').L().ProRange(func(pair Value) bool {
-			s.assert(pair.Type() == 'l' || s.panic("invalid binding list format: %v", pair))
+		s.InType(LIST).L().ProRange(func(pair Value) bool {
+			s.assert(pair.Type() == LIST || s.panic("invalid binding list format: %v", pair))
 			p := pair.L()
-			s.assert(p.HasProNext() && p.Val().Type() == 'y' && p.Val().S() != "" || s.panic("invalid binding list format: %v", pair))
+			s.assert(p.HasProNext() && p.Val().Type() == SYM && p.Val().S() != "" || s.panic("invalid binding list format: %v", pair))
 			names, values = append(names, p.Val()), append(values, p.Next().Val())
 			return true
 		})
-		fn := L(Empty, Sy2("lambda", s.Caller), L(Empty, names...), L(s.Args, Sy2("if", s.Caller), Void, Void))
+		fn := L(Empty, s.Caller.Y("lambda"), L(Empty, names...), L(s.Args, s.Caller.Y("if"), Void, Void))
 		s.Out = L(L(Empty, values...).L(), fn)
 	})).Store("eval", NewFunc(1, func(s *State) {
 		s.Out = __exec(s.In(), execState{local: s.Context, debug: s.Debug})
@@ -204,31 +204,31 @@ func init() {
 			s.Out = ev2(s.Context.Parse("(parse)", x))
 		}
 	})).Store("set-car!", NewFunc(2, func(s *State) {
-		l := s.InType('l').L()
+		l := s.InType(LIST).L()
 		s.assert(!l.ProEmpty() || s.panic("set-car!: empty list"))
 		l.setVal(s.In())
 	})).Store("set-cdr!", NewFunc(2, func(s *State) {
-		s.Out = L(s.InType('l').L().SetCdr(s.In()))
+		s.Out = L(s.InType(LIST).L().SetCdr(s.In()))
 	})).Store("list", NewFunc(Vararg, func(s *State) {
 		s.Out = L(s.Args)
 	})).Store("append", NewFunc(2, func(s *State) {
-		s.Out = L(s.InType('l').L().ProAppend(s.InType('l').L()))
+		s.Out = L(s.InType(LIST).L().ProAppend(s.InType(LIST).L()))
 	})).Store("cons", NewFunc(2, func(s *State) {
 		s.Out = L(Cons(s.In(), s.In()))
 	})).Store("car", NewFunc(1, func(s *State) {
-		s.Out = s.InType('l').L().Car()
+		s.Out = s.InType(LIST).L().Car()
 	})).Store("cdr", NewFunc(1, func(s *State) {
-		s.Out = s.InType('l').L().Cdr()
+		s.Out = s.InType(LIST).L().Cdr()
 	})).Store("last", NewFunc(1, func(s *State) {
-		l := s.InType('l').L()
+		l := s.InType(LIST).L()
 		s.assert(!l.ProEmpty() || s.panic("last: empty list"))
 		s.Out = l.ProLast().Val()
 	})).Store("init", NewFunc(1, func(s *State) {
-		l := s.InType('l').L()
+		l := s.InType(LIST).L()
 		s.assert(!l.ProEmpty() || s.panic("init: empty list"))
 		s.Out = L(l.ProTake(-1))
 	})).Store("length", NewFunc(1, func(s *State) {
-		s.Out = N(float64(s.InType('l').L().ProLen()))
+		s.Out = N(float64(s.InType(LIST).L().ProLen()))
 	})).Store("pcall", NewFunc(2, func(s *State) {
 		rc := s.In()
 		defer func() {
@@ -243,21 +243,21 @@ func init() {
 		s.Out = __exec(L(Empty, s.In().Quote()), execState{debug: s.Debug, local: s.Context})
 	})).Store("apply", NewFunc(2, func(s *State) {
 		expr := InitListBuilder().Append(s.InType('f').Quote())
-		s.InType('l').L().ProRange(func(v Value) bool { expr = expr.Append(v.Quote()); return true })
+		s.InType(LIST).L().ProRange(func(v Value) bool { expr = expr.Append(v.Quote()); return true })
 		v, err := (*Context)(nil).Exec(expr.Build())
 		s.assert(err == nil || s.panic("apply panic: %v", err))
 		s.Out = v
 	})).
 		Store("raise", NewFunc(1, func(s *State) { panic(s.In()) })).
 		Store("string->number", NewFunc(1, func(s *State) { s.Out = ev2(strconv.ParseFloat(s.InType('s').S(), 64)) })).
-		Store("symbol->string", NewFunc(1, func(s *State) { s.Out = S(s.InType('y').S()) })).
+		Store("symbol->string", NewFunc(1, func(s *State) { s.Out = S(s.InType(SYM).S()) })).
 		Store("number->string", NewFunc(1, func(s *State) { s.Out = S(strconv.FormatFloat(s.InType('n').N(), 'f', -1, 64)) })).
-		Store("string->symbol", NewFunc(1, func(s *State) { s.Out = Sy(s.InType('s').S(), 0) })).
+		Store("string->symbol", NewFunc(1, func(s *State) { s.Out = Y(s.InType('s').S(), 0) })).
 		Store("string->error", NewFunc(1, func(s *State) { s.Out = V(fmt.Errorf(s.InType('s').S())) })).
 		Store("error?", NewFunc(1, func(s *State) { _, ok := s.In().V().(error); s.Out = B(ok) })).
-		Store("null?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == 'l' && s.LastIn().L().ProEmpty()) })).
-		Store("list?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == 'l' && s.LastIn().L().IsProperList()) })).
-		Store("void?", NewFunc(1, func(s *State) { s.Out = B(s.In() == Void) })).Store("pair?", _Ft('l')).Store("symbol?", _Ft('y')).Store("boolean?", _Ft('b')).Store("number?", _Ft('n')).Store("string?", _Ft('s')).
+		Store("null?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == LIST && s.LastIn().L().ProEmpty()) })).
+		Store("list?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == LIST && s.LastIn().L().IsProperList()) })).
+		Store("void?", NewFunc(1, func(s *State) { s.Out = B(s.In() == Void) })).Store("pair?", _Ft(LIST)).Store("symbol?", _Ft(SYM)).Store("boolean?", _Ft('b')).Store("number?", _Ft('n')).Store("string?", _Ft('s')).
 		Store("stringify", NewFunc(1, func(s *State) { s.Out = S(s.In().String()) }))
 	Default.Store("letrec", NewFunc(1|Vararg|Macro, func(s *State) {
 		/* Unwrap to:
@@ -268,13 +268,13 @@ func init() {
 				(set! 'varn varb_tmp)
 				expr...                                // expressions
 		*/
-		let, setq := Sy2("let", s.Caller), Sy2("set!", s.Caller)
+		let, setq := s.Caller.Y("let"), s.Caller.Y("set!")
 		var innersets, innerbinds, outerbinds []Value
-		s.InType('l').L().ProRange(func(v Value) bool {
-			s.assert(v.Type() == 'l' || s.panic("invalid binding list format: %v", v))
+		s.InType(LIST).L().ProRange(func(v Value) bool {
+			s.assert(v.Type() == LIST || s.panic("invalid binding list format: %v", v))
 			b := v.L()
-			s.assert(b.HasProNext() && b.Val().Type() == 'y' && b.Val().S() != "" || s.panic("invalid binding list format: %v", v))
-			tmpvar := Sy(b.Val().S()+"tmp", 0)
+			s.assert(b.HasProNext() && b.Val().Type() == SYM && b.Val().S() != "" || s.panic("invalid binding list format: %v", v))
+			tmpvar := Y(b.Val().S()+"tmp", 0)
 			innersets = append(innersets, L(Empty, setq, b.Val(), tmpvar))
 			innerbinds = append(innerbinds, L(Empty, tmpvar, b.Next().Val()))
 			outerbinds = append(outerbinds, L(Empty, b.Val(), Void))
@@ -291,13 +291,13 @@ func init() {
 				...
 					expr...
 		*/
-		let, binds := Sy2("let", s.Caller), s.InType('l').L().ProSlice()
-		last := L(s.Args, Sy2("begin", s.Caller))
+		let, binds := s.Caller.Y("let"), s.InType(LIST).L().ProSlice()
+		last := L(s.Args, s.Caller.Y("begin"))
 		for i := len(binds) - 1; i >= 0; i-- {
 			bd := binds[i]
-			s.assert(bd.Type() == 'l' || s.panic("invalid binding list format: %v", bd))
+			s.assert(bd.Type() == LIST || s.panic("invalid binding list format: %v", bd))
 			lst := bd.L()
-			s.assert(lst.HasProNext() && lst.Val().Type() == 'y' && lst.Val().S() != "" || s.panic("invalid binding list format: %v", bd))
+			s.assert(lst.HasProNext() && lst.Val().Type() == SYM && lst.Val().S() != "" || s.panic("invalid binding list format: %v", bd))
 			last = L(Empty, let, L(Empty, bd), last)
 		}
 		s.Out = last
@@ -349,7 +349,7 @@ func init() {
 	Default.Store("string-length", NewFunc(1, func(s *State) { s.Out = N(float64(len(s.InType('s').S()))) }))
 	Default.Store("substring?", NewFunc(2, func(s *State) { s.Out = B(strings.Contains(s.InType('s').S(), s.InType('s').S())) }))
 	// 	Default.Install("skip", 2, func(s *State) {
-	// 		l := s.In(1, 'l').L()
+	// 		l := s.In(1, LIST).L()
 	// 		for i := 0; i < int(s.In(0, 'n').N()); i++ {
 	// 			l, _ = Tail(l)
 	// 		}
@@ -357,11 +357,11 @@ func init() {
 	// 	})
 	// 	Default.Install("lambda*", 2|Vararg|Macro, func(s *State) {
 	// 		tmpvar := "a" + strconv.FormatInt(time.Now().Unix(), 10)
-	// 		pl, body := s.In(0, 'l').L(), []Value{
-	// 			Sy2("lambda", s.Caller),
+	// 		pl, body := s.In(0, LIST).L(), []Value{
+	// 			s.Caller.Y("lambda"),
 	// 			s.Caller.Make(tmpvar),
-	// 			L(Sy2("define", s.Caller), s.Caller.Make(tmpvar+"-len"), L(
-	// 				Sy2("vector-len", s.Caller), s.Caller.Make(tmpvar),
+	// 			L(s.Caller.Y("define"), s.Caller.Make(tmpvar+"-len"), L(
+	// 				s.Caller.Y("vector-len"), s.Caller.Make(tmpvar),
 	// 			)),
 	// 		}
 	// 		/*
@@ -375,28 +375,28 @@ func init() {
 	// 		*/
 	// 		for i := range pl {
 	// 			var name, val Value
-	// 			if pl[i].Type() == 'y' {
+	// 			if pl[i].Type() == SYM {
 	// 				name, val = pl[i], ProEmpty
 	// 				if a := pl[i].S(); strings.HasSuffix(a, "...") {
 	// 					// Special case: "name..." to catch the rest arguments
 	// 					body = Append(body, L(
-	// 						Sy2("define", s.Caller),
+	// 						s.Caller.Y("define"),
 	// 						s.Caller.Make(ifstr(len(a) == 3, "...", a[:len(a)-3])),
-	// 						L(Sy2("skip", s.Caller), N(float64(i)), s.Caller.Make(tmpvar)),
+	// 						L(s.Caller.Y("skip"), N(float64(i)), s.Caller.Make(tmpvar)),
 	// 					))
 	// 					continue
 	// 				}
 	// 			} else {
-	// 				s.assert(pl[i].Type() == 'l' && pl[i]._len() == 2 || s.panic("invalid binding list: %v", pl[i]))
+	// 				s.assert(pl[i].Type() == LIST && pl[i]._len() == 2 || s.panic("invalid binding list: %v", pl[i]))
 	// 				name, val = pl[i]._at(0), pl[i]._at(1)
 	// 			}
 	// 			body = Append(body, L(
-	// 				Sy2("define", s.Caller),
+	// 				s.Caller.Y("define"),
 	// 				name,
 	// 				L(
-	// 					Sy2("if", s.Caller),
-	// 					L(Sy2("<", s.Caller), N(float64(i)), s.Caller.Make(tmpvar+"-len")),
-	// 					L(Sy2("vector-nth", s.Caller), s.Caller.Make(tmpvar), N(float64(i))),
+	// 					s.Caller.Y("if"),
+	// 					L(s.Caller.Y("<"), N(float64(i)), s.Caller.Make(tmpvar+"-len")),
+	// 					L(s.Caller.Y("vector-nth"), s.Caller.Make(tmpvar), N(float64(i))),
 	// 					val,
 	// 				),
 	// 			))
@@ -442,7 +442,7 @@ func init() {
 		}
 	}))
 	Default.Store("map", NewFunc(2, func(s *State) {
-		fn, r, l, i := s.InType('f'), []Value{}, s.InType('l').L(), 0
+		fn, r, l, i := s.InType('f'), []Value{}, s.InType(LIST).L(), 0
 		l.ProRange(func(h Value) bool {
 			v, err := fn.F().Call(h)
 			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
@@ -453,7 +453,7 @@ func init() {
 		s.Out = L(Empty, r...)
 	}))
 	Default.Store("reduce", NewFunc(3, func(s *State) {
-		fn, left, l, i := s.InType('f'), s.In(), s.InType('l').L(), 0
+		fn, left, l, i := s.InType('f'), s.In(), s.InType(LIST).L(), 0
 		var err error
 		l.ProRange(func(h Value) bool {
 			left, err = fn.F().Call(left, h)
@@ -464,7 +464,7 @@ func init() {
 		s.Out = left
 	}))
 	Default.Store("reduce-right", NewFunc(3, func(s *State) {
-		fn, right, rl := s.InType('f'), s.In(), s.InType('l').L().ProSlice()
+		fn, right, rl := s.InType('f'), s.In(), s.InType(LIST).L().ProSlice()
 		var err error
 		for i := len(rl) - 1; i >= 0; i-- {
 			right, err = fn.F().Call(right, rl[i])
@@ -474,16 +474,16 @@ func init() {
 	}))
 	// 	Default.Install("cond", Macro|Vararg, func(s *State) {
 	// 		if len(s.Args) == 0 {
-	// 			s.Out = Sy2("true", s.Caller)
+	// 			s.Out = s.Caller.Y("true")
 	// 			return
 	// 		}
 	// 		build := func(expr Value) []Value {
-	// 			s.assert(expr.Type() == 'l' && expr._len() == 2 || s.panic("invalid cond statement: %v", expr))
+	// 			s.assert(expr.Type() == LIST && expr._len() == 2 || s.panic("invalid cond statement: %v", expr))
 	// 			cond, stat := expr.L()[0], expr.L()[1]
-	// 			if cond.Type() == 'y' && cond.S() == "else" {
-	// 				cond = Sy2("true", s.Caller)
+	// 			if cond.Type() == SYM && cond.S() == "else" {
+	// 				cond = s.Caller.Y("true")
 	// 			}
-	// 			return []Value{Sy2("if", s.Caller), cond, stat, Void}
+	// 			return []Value{s.Caller.Y("if"), cond, stat, Void}
 	// 		}
 	// 		exprs := build(s.In(0, 0))
 	// 		for i, head := 1, exprs; i < len(s.Args); i++ {
@@ -505,7 +505,7 @@ func init() {
 			if rv.Kind() == reflect.Ptr {
 				rv = rv.Elem()
 			}
-			s.assert(v.Type() == 'y' || s.panic("expect field name to be symbol: %v", v))
+			s.assert(v.Type() == SYM || s.panic("expect field name to be symbol: %v", v))
 			rv = rv.FieldByName(v.S())
 			return true
 		})
@@ -518,7 +518,7 @@ func init() {
 			if rv.Kind() == reflect.Ptr {
 				rv = rv.Elem()
 			}
-			s.assert(v.Type() == 'y' || s.panic("expect field name to be symbol: %v", v))
+			s.assert(v.Type() == SYM || s.panic("expect field name to be symbol: %v", v))
 			rv = rv.FieldByName(v.S())
 			return true
 		})
@@ -572,24 +572,24 @@ func init() {
 		}
 	}))
 	Default.Store("setf!", NewFunc(2|Macro, func(s *State) {
-		a, v := s.InType('y').S(), s.In()
+		a, v := s.InType(SYM).S(), s.In()
 		parts := strings.Split(a, ".")
 		s.assert(len(parts) > 1 || s.panic("too few fields to set"))
 		structname := parts[0]
-		setter := InitListBuilder().Append(Sy2("struct-set!", v)).Append(Sy2(structname, v)).Append(v)
+		setter := InitListBuilder().Append(v.Y("struct-set!")).Append(v.Y(structname)).Append(v)
 		for i := 1; i < len(parts); i++ {
-			setter = setter.Append(Sy2(parts[i], v).Quote())
+			setter = setter.Append(v.Y(parts[i]).Quote())
 		}
 		s.Out = setter.Build()
 	}))
 	Default.Store("getf", NewFunc(1|Macro, func(s *State) {
-		a := s.InType('y').S()
+		a := s.InType(SYM).S()
 		parts := strings.Split(a, ".")
 		s.assert(len(parts) > 1 || s.panic("too few fields to get"))
 		structname := parts[0]
-		setter := InitListBuilder().Append(Sy2("struct-get", s.Caller)).Append(Sy2(structname, s.Caller))
+		setter := InitListBuilder().Append(s.Caller.Y("struct-get")).Append(s.Caller.Y(structname))
 		for i := 1; i < len(parts); i++ {
-			setter = setter.Append(Sy2(parts[i], s.Caller).Quote())
+			setter = setter.Append(s.Caller.Y(parts[i]).Quote())
 		}
 		s.Out = setter.Build()
 	}))
@@ -597,7 +597,7 @@ func init() {
 	// 		"write data to file, 'json or 'j if needed",
 	// 		func(fn string, a interface{}, t OptAtom) error {
 	// 			var buf []byte
-	// 			switch t.A.v {
+	// 			switch t.Y.v {
 	// 			case "j":
 	// 				buf, _ = json.Marshal(a)
 	// 			case "json":
@@ -627,7 +627,7 @@ func init() {
 				case token.NOT:
 					op = "not"
 				}
-				return L(Empty, Sy(op, 0), do(e.X))
+				return L(Empty, Y(op, 0), do(e.X))
 			case *ast.BinaryExpr:
 				op := e.Op.String()
 				switch e.Op {
@@ -636,7 +636,7 @@ func init() {
 				case token.LOR:
 					op = "or"
 				}
-				m := L(Empty, Sy(op, 0), do(e.X), do(e.Y))
+				m := L(Empty, Y(op, 0), do(e.X), do(e.Y))
 				return m
 			case *ast.BasicLit:
 				switch e.Kind {
@@ -651,7 +651,7 @@ func init() {
 					return S(v)
 				}
 			case *ast.Ident:
-				return Sy(e.Name, 0)
+				return Y(e.Name, 0)
 			case *ast.ParenExpr:
 				return do(e.X)
 			case *ast.CallExpr:
@@ -686,7 +686,7 @@ func init() {
 	// 					return v
 	// 				}
 	// 				return nil
-	// 			case 'l':
+	// 			case LIST:
 	// 				v = v[0].L()
 	// 			}
 	// 		}
@@ -703,28 +703,28 @@ func init() {
 	//
 	// 	Default.Install("define-record-type", 1|Macro|Vararg, func(s *State) {
 	// 		// (define-record name (options...) ...)
-	// 		recordName := s.In(0, 'y').S()
+	// 		recordName := s.In(0, SYM).S()
 	// 		typeIndicator := &record{name: recordName}
 	//
 	// 		fields := map[string]*_f{}
 	//
 	// 		ret := []Value{
-	// 			L(Sy2("define", s.Caller), Sy(recordName+"-type", 0, 0), V(typeIndicator)),
+	// 			L(s.Caller.Y("define"), Y(recordName+"-type", 0, 0), V(typeIndicator)),
 	// 		}
 	//
 	// 		for i := 1; i < len(s.Args); i++ {
-	// 			l := s.In(i, 'l').L()
-	// 			s.assert(len(l) >= 2 && l[0].Type() == 'y' || s.panic("invalid record options: %v", s.Args[i]))
+	// 			l := s.In(i, LIST).L()
+	// 			s.assert(len(l) >= 2 && l[0].Type() == SYM || s.panic("invalid record options: %v", s.Args[i]))
 	// 			switch l[0].S() {
 	// 			case "fields":
 	// 				for i := 1; i < len(l); i++ {
 	// 					field := l[i]
 	// 					f := &_f{index: i}
 	// 					switch _, va, _, vl, vtype := l[i]._value(); vtype {
-	// 					case 'y':
+	// 					case SYM:
 	// 						f.name = recordName + "-" + va
-	// 					case 'l':
-	// 						s.assert(len(vl) == 2 && vl[0].Type() == 'y' || s.panic("invalid field: %v", field))
+	// 					case LIST:
+	// 						s.assert(len(vl) == 2 && vl[0].Type() == SYM || s.panic("invalid field: %v", field))
 	// 						f.name, f.mutable = recordName+"-"+vl[0].S(), vl[1].S() == "mutable"
 	// 					default:
 	// 						s.assert(false || s.panic("invalid field: %v", field))
@@ -734,7 +734,7 @@ func init() {
 	// 				typeIndicator.num = len(fields)
 	// 			case "parent":
 	// 				s.assert(typeIndicator.parent == nil || s.panic("multiple parents: %v", l[1]))
-	// 				s.assert(l[1].Type() == 'y' || s.panic("invalid parent: %v", l[1]))
+	// 				s.assert(l[1].Type() == SYM || s.panic("invalid parent: %v", l[1]))
 	// 				pf, _ := s.Context.Load(l[1].S() + "-type")
 	// 				typeIndicator.parent = pf.V().(*record)
 	// 			}
@@ -743,11 +743,11 @@ func init() {
 	// 		fieldNames := []string{}
 	// 		for fn, f := range fields {
 	// 			fieldNames = Append(fieldNames, fn)
-	// 			ret = Append(ret, L(Sy2("define", s.Caller), Sy(recordName+"-"+f.name, 0, 0),
+	// 			ret = Append(ret, L(s.Caller.Y("define"), Y(recordName+"-"+f.name, 0, 0),
 	// 				_Vquote(NewFunc(&Func{
 	// 					fargs: 1,
 	// 					f: func(ss *State) {
-	// 						r := ss.In(0, 'l').L()
+	// 						r := ss.In(0, LIST).L()
 	// 						ss.assert(len(r) > 0 || ss.panic("invalid record: %v", ss.In(0, 0)))
 	// 						r = findRecordIndex(r, typeIndicator)
 	// 						ss.assert(r != nil || ss.panic("not '%s' record: %v", recordName, ss.In(0, 0)))
@@ -758,11 +758,11 @@ func init() {
 	// 			if !f.mutable {
 	// 				return
 	// 			}
-	// 			ret = Append(ret, L(Sy2("define", s.Caller), Sy(recordName+"-"+f.name+"-set!", 0, 0),
+	// 			ret = Append(ret, L(s.Caller.Y("define"), Y(recordName+"-"+f.name+"-set!", 0, 0),
 	// 				_Vquote(NewFunc(&Func{
 	// 					fargs: 2,
 	// 					f: func(ss *State) {
-	// 						r := ss.In(0, 'l').L()
+	// 						r := ss.In(0, LIST).L()
 	// 						ss.assert(len(r) > 0 || ss.panic("invalid record: %v", ss.In(0, 0)))
 	// 						r = findRecordIndex(r, typeIndicator)
 	// 						ss.assert(r != nil || ss.panic("not '%s' record: %v", recordName, ss.In(0, 0)))
@@ -772,31 +772,31 @@ func init() {
 	// 			))
 	// 		}
 	//
-	// 		ret = Append(ret, L(Sy2("define", s.Caller), Sy(recordName+"-primary-fields", 0, 0), V(fieldNames)))
+	// 		ret = Append(ret, L(s.Caller.Y("define"), Y(recordName+"-primary-fields", 0, 0), V(fieldNames)))
 	//
-	// 		// name, fields, typename := s.In(0, 'y').S(), make(map[string]int, len(s.Args)-1), new(int)
+	// 		// name, fields, typename := s.In(0, SYM).S(), make(map[string]int, len(s.Args)-1), new(int)
 	// 		// for i := 1; i < len(s.Args); i++ {
-	// 		// 	fields[s.In(i, 'y').S()] = i
+	// 		// 	fields[s.In(i, SYM).S()] = i
 	// 		// 	func(i int) {
-	// 		// 		name := name + "-" + s.In(i, 'y').S()
+	// 		// 		name := name + "-" + s.In(i, SYM).S()
 	//
 	// 		// 		s.Context.Install(name, 1, func(ss *State) { // getter
-	// 		// 			ss.assert(len(ss.In(0, 'l').L()) == len(s.Args) && ss.In(0, 'l').L()[0].V() == typename || ss.panic("not a %s record", name))
-	// 		// 			ss.Out = ss.In(0, 'l').L()[i]
+	// 		// 			ss.assert(len(ss.In(0, LIST).L()) == len(s.Args) && ss.In(0, LIST).L()[0].V() == typename || ss.panic("not a %s record", name))
+	// 		// 			ss.Out = ss.In(0, LIST).L()[i]
 	// 		// 		})
 	//
 	// 		// 		s.Context.Install(name+"-set!", 2, func(ss *State) { // setter
-	// 		// 			ss.assert(len(ss.In(0, 'l').L()) == len(s.Args) && ss.In(0, 'l').L()[0].V() == typename || ss.panic("not a %s record", name))
-	// 		// 			ss.In(0, 'l').L()[i] = ss.In(1, 0) // setter
+	// 		// 			ss.assert(len(ss.In(0, LIST).L()) == len(s.Args) && ss.In(0, LIST).L()[0].V() == typename || ss.panic("not a %s record", name))
+	// 		// 			ss.In(0, LIST).L()[i] = ss.In(1, 0) // setter
 	// 		// 		})
 	// 		// 	}(i)
 	// 		// }
 	//
 	// 		// s.Context.Install(name+"?", 1, func(ss *State) {
-	// 		// 	ss.Out = B(len(ss.In(0, 'l').L()) == len(s.Args) && ss.In(0, 'l').L()[0].V() == typename)
+	// 		// 	ss.Out = B(len(ss.In(0, LIST).L()) == len(s.Args) && ss.In(0, LIST).L()[0].V() == typename)
 	// 		// })
 	//
-	// 		ret = Append(ret, L(Sy2("define", s.Caller), Sy("make-"+recordName, 0, 0),
+	// 		ret = Append(ret, L(s.Caller.Y("define"), Y("make-"+recordName, 0, 0),
 	// 			_Vquote(NewFunc(&Func{
 	// 				fargs: calcRecordTotalArgs(typeIndicator),
 	// 				f: func(ss *State) {
@@ -810,7 +810,7 @@ func init() {
 }
 
 func (v Value) TypedVal(t reflect.Type) reflect.Value {
-	if v.Type() == 'l' {
+	if v.Type() == LIST {
 		s := reflect.MakeSlice(t, 0, 0)
 		v.L().ProRange(func(v Value) bool { s = reflect.Append(s, v.TypedVal(t.Elem())); return true })
 		return s
@@ -843,7 +843,7 @@ func vlisttointerface(l []Value) []interface{} {
 
 func trystr(s *State) string {
 	switch s.In().Type() {
-	case 's', 'y':
+	case 's', SYM:
 		return s.LastIn().S()
 	case 'n':
 		if s.LastIn().ptr != nil {

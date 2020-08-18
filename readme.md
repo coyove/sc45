@@ -5,9 +5,9 @@ Sc45 serves one purpose: give your program an embedded REPL on-the-fly with mini
 ```Go
 func init() {
     it := sc45.New()
-    it.Store("turn-on-flag1", Fgo(func(v bool) { FLAG1 = v }))
-    it.Store("turn-on-flag2", Fgo(func(v bool) { FLAG2 = v }))
-    it.Store("pre-setup", Fgo(func(n int, kafkaTopic string) { RerouteMsg(n, kafkaTopic) }))
+    it.Store("turn-on-flag1", NewGoFunc(func(v bool) { FLAG1 = v }))
+    it.Store("turn-on-flag2", NewGoFunc(func(v bool) { FLAG2 = v }))
+    it.Store("pre-setup", NewGoFunc(func(n int, kafkaTopic string) { RerouteMsg(n, kafkaTopic) }))
     ...
 
     // 1. If your server has debug/pprof enabled:

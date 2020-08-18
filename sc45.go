@@ -19,7 +19,7 @@ import (
 var (
 	Default       = &Context{}
 	Vararg, Macro = 1 << 30, 1 << 29
-	Void, Quote   = Value{}, Sy("quote", 0)
+	Void, Quote   = Value{}, Y("quote", 0)
 	Empty         = &Pair{_empty: true}
 	Types         = map[ValueType]string{STR: "string", SYM: "symbol", NUM: "number", LIST: "list", ANY: "any", FUNC: "function", VOID: "void", BOOL: "boolean"}
 	TypesRev      = map[string]ValueType{"string": STR, "symbol": SYM, "number": NUM, "list": LIST, "any": ANY, "function": FUNC, "void": VOID, "boolean": BOOL}
@@ -93,7 +93,7 @@ func (f *Func) Call(a ...Value) (Value, error) {
 
 func (f *Func) String() string {
 	if f.n == Void {
-		return ifstr(f.nvar_or_fname == "#v", "/*missing native code*/", f.nvar_or_fname+" /*native code*/")
+		return ifstr(f.nvar_or_fname == "#v", "#|missing native code|#", f.nvar_or_fname+" #|native code|#")
 	}
 	return ifstr(f.macro, "(lambda-syntax (", "(lambda (") + strings.Join(f.nargs, " ") + ifstr(f.nvar_or_fname != "", " . "+f.nvar_or_fname, "") + ") " +
 		f.n.String() + ")" + ifstr(f.wrapper, " #|wrapper|#", "")
@@ -133,7 +133,7 @@ func (ctx *Context) set(k string, v Value) {
 }
 
 func (ctx *Context) Store(k string, v Value) *Context {
-	if v.Type() == 'f' && v.F().n == Void {
+	if v.Type() == FUNC && v.F().n == Void {
 		v.F().nvar_or_fname = k
 	}
 	if _, mv := ctx.find(k); mv == nil {
@@ -170,9 +170,9 @@ func (ctx *Context) Copy() *Context {
 }
 
 func __execQuasi(expr Value, state execState) (Value, *Pair) {
-	if expr.Type() == 'l' && !expr.L().ProEmpty() {
+	if expr.Type() == LIST && !expr.L().ProEmpty() {
 		lst := expr.L()
-		if x := lst.Val(); x.Type() == 'y' {
+		if x := lst.Val(); x.Type() == SYM {
 			switch x.S() {
 			case "unquote":
 				state.assert(lst.HasProNext() || state.panic("invalid unquote syntax"))
@@ -180,10 +180,10 @@ func __execQuasi(expr Value, state execState) (Value, *Pair) {
 			case "unquote-splicing":
 				state.assert(lst.HasProNext() || state.panic("invalid unquote-splicing syntax"))
 				v := __exec(lst.Next().Val(), state)
-				if v.Type() == 'l' {
+				if v.Type() == LIST {
 					return Void, v.L()
 				}
-				return Void, (&Pair{}).setVal(v)
+				return Void, pval(v)
 			}
 		}
 		results := InitListBuilder()
@@ -202,11 +202,11 @@ func __execQuasi(expr Value, state execState) (Value, *Pair) {
 func __exec(expr Value, state execState) Value {
 TAIL_CALL:
 	switch expr.Type() {
-	case 'y':
+	case SYM:
 		v, ok := state.local.Load(expr.S())
 		state.assert(ok || state.panic("unbound %v", expr))
 		return v
-	case 'l': // evaluating the list
+	case LIST: // evaluating the list
 	default:
 		return expr
 	}
@@ -217,7 +217,7 @@ TAIL_CALL:
 	}
 
 	head := c.Val()
-	if *state.debug.K = c.Val(); state.debug.K.Type() == 'y' {
+	if *state.debug.K = c.Val(); state.debug.K.Type() == SYM {
 		switch va := state.debug.K.S(); va {
 		case "if":
 			state.assert(c.MoveProNext(&c) || state.panic("invalid if syntax, missing condition"))
@@ -240,15 +240,15 @@ TAIL_CALL:
 			state.assert(c.MoveProNext(&c) || state.panic("invalid lambda* syntax, missing parameters"))
 			f := &Func{cls: state.local, macro: va != "lambda", location: *state.debug.L}
 			switch c.Val().Type() {
-			case 'y': // (lambda* args body)
+			case SYM: // (lambda* args body)
 				f.nvar_or_fname = c.Val().S()
-			case 'l': // (lambda* (a1 a2 ... an) body)
+			case LIST: // (lambda* (a1 a2 ... an) body)
 				for bindings := c.Val().L(); bindings != nil; bindings = bindings.Next() {
 					if bindings.Improper() {
-						state.assert(bindings.Val().Type() == 'y' || state.panic("invalid parameter, expect valid symbol"))
+						state.assert(bindings.Val().Type() == SYM || state.panic("invalid parameter, expect valid symbol"))
 						f.nvar_or_fname = bindings.Val().S()
 					} else if !bindings.Empty() {
-						state.assert(bindings.Val().Type() == 'y' || state.panic("invalid parameter, expect valid symbol"))
+						state.assert(bindings.Val().Type() == SYM || state.panic("invalid parameter, expect valid symbol"))
 						f.nargs = append(f.nargs, bindings.Val().S())
 					}
 				}
@@ -257,17 +257,17 @@ TAIL_CALL:
 			}
 			state.assert(c.MoveProNext(&c) || state.panic("invalid lambda syntax, missing lambda body"))
 			if f.n = c.Val(); c.HasProNext() {
-				f.n = L(c, Sy2("if", *state.debug.K), Void, Void)
+				f.n = L(c, state.debug.K.Y("if"), Void, Void)
 			}
 			return F(f)
 		case "match":
 			state.assert(c.MoveProNext(&c) || state.panic("invalid match syntax, missing source"))
 			source := __exec(c.Val(), state)
-			state.assert(source.Type() == 'l' || state.panic("invalid match syntax, expect source to be list"))
-			state.assert(c.MoveProNext(&c) && c.Val().Type() == 'l' || state.panic("invalid match syntax, missing symbol list"))
+			state.assert(source.Type() == LIST || state.panic("invalid match syntax, expect source to be list"))
+			state.assert(c.MoveProNext(&c) && c.Val().Type() == LIST || state.panic("invalid match syntax, missing symbol list"))
 			symbols := c.Val().L().ProSlice()
 		MATCH_NEXT:
-			state.assert(c.MoveProNext(&c) && c.Val().Type() == 'l' || state.panic("invalid match syntax, missing pattern"))
+			state.assert(c.MoveProNext(&c) && c.Val().Type() == LIST || state.panic("invalid match syntax, missing pattern"))
 			pattern := c.Val().L()
 			state.assert(c.MoveProNext(&c) || state.panic("invalid match syntax, missing body"))
 			var symbolmap map[string]struct{}
@@ -295,28 +295,28 @@ TAIL_CALL:
 				return L(p)
 			}
 			return v
-		case "unquote":
+		case "unquote", "unquote-splicing":
 			panic(fmt.Errorf("unquote outside quasiquote"))
 		case "set!":
-			state.assert(c.MoveProNext(&c) && c.Val().Type() == 'y' || state.panic("invalid set! syntax, missing symbol"))
+			state.assert(c.MoveProNext(&c) && c.Val().Type() == SYM || state.panic("invalid set! syntax, missing symbol"))
 			x := c.Val().S()
 			_, m := state.local.find(x)
 			state.assert(m != nil || state.panic("set!: unbound %s", x))
-			state.assert(c.MoveProNext(&c) || state.panic("invalid set! syntax, missing bound Build"))
+			state.assert(c.MoveProNext(&c) || state.panic("invalid set! syntax, missing bound value"))
 			m.set(x, __exec(c.Val(), state))
 			return Void
 		case "define":
 			switch c.MoveProNext(&c); c.Val().Type() {
-			case 'y':
+			case SYM:
 				x := c.Val().S()
 				state.assert(state.local.m[x] == Void || state.panic("re-define %s", x)).
-					assert(c.MoveProNext(&c) || state.panic("invalid define syntax, missing bound Build"))
+					assert(c.MoveProNext(&c) || state.panic("invalid define syntax, missing bound value"))
 				state.local.set(x, __exec(c.Val(), state))
-			case 'l':
+			case LIST:
 				lst := c.Val().L()
 				state.assert(!lst.ProEmpty() || state.panic("invalid define syntax, missing function name")).
-					assert(c.MoveProNext(&c) || state.panic("invalid define syntax, missing bound Build"))
-				s := L(Empty, Sy2("define", head), lst.Val(), L(c, Sy2("lambda", head), L(lst.Next())))
+					assert(c.MoveProNext(&c) || state.panic("invalid define syntax, missing bound value"))
+				s := L(Empty, head.Y("define"), lst.Val(), L(c, head.Y("lambda"), L(lst.Next())))
 				return __exec(s, state)
 			default:
 				panic("invalid define syntax, missing binding symbol")
@@ -326,7 +326,7 @@ TAIL_CALL:
 	}
 
 	fn := __exec(head, state)
-	state.assert(fn.Type() == 'f' || state.panic("invalid function: %v", head))
+	state.assert(fn.Type() == FUNC || state.panic("invalid function: %v", head))
 	cc := fn.F()
 
 	oldLoc := *state.debug.L
@@ -389,10 +389,10 @@ func (ctx *Context) Parse(filename, text string) (expr Value, err error) {
 	}
 
 	v = ctx.unwrapMacro(v, false)
-	if v.Type() == 'l' {
-		v = L(v.L(), Sy("if", 0), Void, Void)
+	if v.Type() == LIST {
+		v = L(v.L(), Y("if", 0), Void, Void)
 	} else {
-		v = L(Empty, Sy("if", 0), Void, Void, v)
+		v = L(Empty, Y("if", 0), Void, Void, v)
 	}
 	v = F(&Func{n: v, cls: ctx, wrapper: true, location: filename})
 	return L(Empty, v), nil
@@ -477,7 +477,7 @@ LOOP:
 				s.Scan()
 				comp = comp.Append(Void)
 			default:
-				comp = comp.Append(Sy("#"+scanToDelim(s), uint32(s.Pos().Line)))
+				comp = comp.Append(Y("#"+scanToDelim(s), uint32(s.Pos().Line)))
 			}
 		case ';':
 			for ; ; s.Scan() {
@@ -491,7 +491,7 @@ LOOP:
 			break LOOP
 		case '.':
 			c := ctx.scan(s, true)
-			if c.Type() == 'l' {
+			if c.Type() == LIST {
 				*comp.Current = *c.L()
 			} else {
 				comp.Current.setVal(c)._empty = false
@@ -502,7 +502,7 @@ LOOP:
 		case '\'', '`':
 			c := ctx.scan(s, true)
 			ctx.assert(c != Void || ctx.panic("invalid quote syntax"))
-			comp = comp.Append(L(Empty, Sy(ifstr(tok == '\'', "quote", "quasiquote"), 0), c))
+			comp = comp.Append(L(Empty, Y(ifstr(tok == '\'', "quote", "quasiquote"), 0), c))
 		case ',':
 			sp := false
 			if s.Peek() == '@' {
@@ -511,7 +511,7 @@ LOOP:
 			}
 			c := ctx.scan(s, true)
 			ctx.assert(c != Void || ctx.panic("invalid unquote syntax"))
-			comp = comp.Append(L(Empty, Sy(ifstr(sp, "unquote-splicing", "unquote"), 0), c))
+			comp = comp.Append(L(Empty, Y(ifstr(sp, "unquote-splicing", "unquote"), 0), c))
 		default:
 			text := s.TokenText() + scanToDelim(s)
 			if v, ok := strconv.ParseInt(text, 0, 64); ok == nil || tok == scanner.Int {
@@ -519,7 +519,7 @@ LOOP:
 			} else if v, ok := strconv.ParseFloat(text, 64); ok == nil || tok == scanner.Float {
 				comp = comp.Append(N(v).WithString(text))
 			} else {
-				comp = comp.Append(Sy(text, uint32(s.Pos().Line)))
+				comp = comp.Append(Y(text, uint32(s.Pos().Line)))
 			}
 		}
 		if scanOne && comp.Len >= 1 {
@@ -530,24 +530,24 @@ LOOP:
 }
 
 func (ctx *Context) unwrapMacro(v Value, quasi bool) Value {
-	if v.Type() != 'l' || v.L().Empty() {
+	if v.Type() != LIST || v.L().Empty() {
 		return v
 	}
 
 	comp := v.L()
-	if head := comp.Val(); head.Type() == 'y' {
+	if head := comp.Val(); head.Type() == SYM {
 		switch head.S() {
 		case "quote":
 			return v
 		case "quasiquote":
 			quasi = true
-		case "unquote":
+		case "unquote", "unquote-splicing":
 			quasi = false
 		default:
 			if quasi {
 				return v
 			}
-			if m, _ := ctx.Load(head.S()); m.Type() == 'f' && m.F().macro {
+			if m, _ := ctx.Load(head.S()); m.Type() == FUNC && m.F().macro {
 				args := InitListBuilder().Append(head)
 				for comp.MoveProNext(&comp); !comp.ProEmpty(); comp.MoveProNext(&comp) {
 					args = args.Append(ctx.unwrapMacro(comp.Val(), false).Quote())
@@ -596,6 +596,11 @@ func ifstr(v bool, t, f string) string {
 	}
 	return f
 }
+func panicif(v bool, t string) {
+	if v {
+		panic(t)
+	}
+}
 
 // V creates Value from interface{}. uint64 and int64 will be stored as they were because float64 can't handle them correctly
 func V(v interface{}) Value {
@@ -619,28 +624,21 @@ func V(v interface{}) Value {
 		return B(rv.Bool())
 	}
 	va := Value{}
-	*va.itfptr() = v
+	*(*interface{})(unsafe.Pointer(&va)) = v
 	return va
 }
-
 func B(v bool) Value {
 	if v {
 		return Value{val: 2}
 	}
 	return Value{val: 1}
 }
-func Sy2(text string, v Value) Value {
-	if v.Type() == 'y' {
-		return Sy(text, v.LineInfo())
-	}
-	return Sy(text, 0)
-}
 func L(lst *Pair, l ...Value) Value {
 	for i := len(l) - 1; i >= 0; i-- {
-		n := (&Pair{}).setNext(lst).setVal(l[i])
+		n := pval(l[i]).setNext(lst)
 		lst = n
 	}
-	return Value{val: 'l', ptr: unsafe.Pointer(lst)}
+	return Value{val: uint64(LIST), ptr: unsafe.Pointer(lst)}
 }
 func N(v float64) Value {
 	if math.IsNaN(v) {
@@ -648,18 +646,16 @@ func N(v float64) Value {
 	}
 	return Value{val: ^math.Float64bits(v)}
 }
-func Sy(v string, ln uint32) Value { return Value{ptr: unsafe.Pointer(&v), val: 1<<51 | uint64(ln)} }
-func S(v string) (vs Value)        { return Value{val: 's', ptr: unsafe.Pointer(&v)} }
-func F(f *Func) Value              { return Value{val: 'f', ptr: unsafe.Pointer(f)} }
+func Y(v string, ln uint32) Value { return Value{ptr: unsafe.Pointer(&v), val: 1<<51 | uint64(ln)} }
+func S(v string) (vs Value)       { return Value{val: uint64(STR), ptr: unsafe.Pointer(&v)} }
+func F(f *Func) Value             { return Value{val: uint64(FUNC), ptr: unsafe.Pointer(f)} }
 
 func (v Value) Quote() Value {
-	if t := v.Type(); t == 'l' || t == 'y' {
-		return L((&Pair{}).setVal(Quote).setNext((&Pair{}).setVal(v).setNext(Empty)))
+	if t := v.Type(); t == LIST || t == SYM {
+		return L(pval(Quote).setNext(pval(v).setNext(Empty)))
 	}
 	return v
 }
-
-// Type returns the type of Value: 'b'ool, 'n'umber, 'l'ist, 's'tring, 'f'unc, s'y'mbol, 'i'nterface, 'v'oid
 func (v Value) Type() ValueType {
 	switch v.val {
 	case 1, 2:
@@ -679,7 +675,6 @@ func (v Value) Type() ValueType {
 		return ANY
 	}
 }
-
 func (v Value) stringify(goStyle bool) string {
 	switch v.Type() {
 	case NUM:
@@ -708,63 +703,62 @@ func (v Value) stringify(goStyle bool) string {
 	case BOOL:
 		return ifstr(v.B(), ifstr(goStyle, "true", "#t"), ifstr(goStyle, "false", "#f"))
 	case ANY:
-		return "#" + fmt.Sprint(*v.itfptr())
+		return "#" + fmt.Sprint(v.A())
 	case FUNC:
 		return v.F().String()
 	default:
 		return ifstr(goStyle, "nil", "#v")
 	}
 }
-
 func (v Value) V() interface{} {
 	switch v.Type() {
-	case 'n':
+	case NUM:
 		return v.N()
-	case 's', 'y':
+	case STR, SYM:
 		return v.S()
-	case 'l':
+	case LIST:
 		var a []interface{}
 		v.L().ProRange(func(v Value) bool { a = append(a, v.V()); return true })
 		return a
-	case 'b':
+	case BOOL:
 		return v.B()
-	case 'i':
-		return *v.itfptr()
-	case 'f':
+	case ANY:
+		return v.A()
+	case FUNC:
 		return v.F()
 	default:
 		return nil
 	}
 }
-
 func (v Value) Equals(v2 Value) bool {
 	if v == v2 {
 		return true
 	} else if vflag, v2flag := v.Type(), v2.Type(); vflag == v2flag {
 		switch vflag {
-		case 'n':
+		case NUM:
 			return v.val == v2.val
-		case 'y', 's':
+		case SYM, STR:
 			return v.S() == v2.S()
-		case 'i':
-			return *v.itfptr() == *v2.itfptr()
+		case ANY:
+			return v.A() == v2.A()
 		}
 	}
 	return false
 }
-
 func (v Value) F() *Func                  { return (*Func)(v.ptr) }
 func (v Value) B() bool                   { return v.val == 2 }
 func (v Value) N() float64                { return math.Float64frombits(^v.val) }
 func (v Value) S() string                 { return *(*string)(v.ptr) }
 func (v Value) L() *Pair                  { return (*Pair)(v.ptr) }
+func (v Value) Y(text string) Value       { return Y(text, uint32(v.Type()/SYM)*v.LineInfo()) }
+func (v Value) A() interface{}            { return *(*interface{})(unsafe.Pointer(&v)) }
 func (v Value) LineInfo() uint32          { return uint32(v.val) }
 func (v Value) String() string            { return v.stringify(false) }
 func (v Value) GoString() string          { return fmt.Sprintf("{val:%016x ptr:%016x}", v.val, v.ptr) }
 func (v Value) IsFalse() bool             { return v.val < 2 } // 0: void, 1: false
 func (v Value) WithString(o string) Value { v.ptr = unsafe.Pointer(&o); return v }
-func (v *Value) itfptr() *interface{}     { return (*interface{})(unsafe.Pointer(v)) }
 
+func pval(v Value) *Pair               { return (&Pair{}).setVal(v) }
 func (p *Pair) Val() Value             { return p.val }
 func (p *Pair) SetCar(v Value) *Pair   { p.val = v; return p }
 func (p *Pair) Next() *Pair            { return p.next }
@@ -772,13 +766,8 @@ func (p *Pair) setVal(v Value) *Pair   { p.val = v; return p }
 func (p *Pair) setNext(p2 *Pair) *Pair { p.next = p2; return p }
 func (p *Pair) Improper() bool         { return p.Next() == nil && !p._empty }
 func (p *Pair) Empty() bool            { return p.Next() == nil && p._empty }
-func (p *Pair) ProEmpty() bool {
-	if p.Improper() {
-		panic("improper list")
-	}
-	return p.Empty()
-}
-func (p *Pair) HasProNext() bool { return p.Next() != nil && !p.Next().ProEmpty() }
+func (p *Pair) ProEmpty() bool         { panicif(p.Improper(), "improper list"); return p.Empty() }
+func (p *Pair) HasProNext() bool       { return p.Next() != nil && !p.Next().ProEmpty() }
 func (p *Pair) MoveProNext(ll **Pair) bool {
 	if p.HasProNext() {
 		*ll = p.Next()
@@ -811,15 +800,13 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 	}
 	isWildcard := func(s string) string {
 		if strings.HasSuffix(s, "*") {
-			if metWildcard {
-				panic("multiple wildcards in one pattern")
-			}
+			panicif(metWildcard, "multiple wildcards in one pattern")
 			return ifstr(len(s) == 1, "*", s[:len(s)-1])
 		}
 		return ""
 	}
 	if p.ProEmpty() {
-		if pattern.Val().Type() == 'y' && !pattern.HasProNext() {
+		if pattern.Val().Type() == SYM && !pattern.HasProNext() {
 			if w := isWildcard(pattern.Val().S()); w != "" {
 				m[w] = L(Empty)
 				return true
@@ -828,7 +815,7 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 		return false
 	}
 	switch pattern.Val().Type() {
-	case 'y':
+	case SYM:
 		sym := pattern.Val().S()
 		if sym == "_" {
 			break
@@ -842,7 +829,7 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 		if w := isWildcard(sym); w != "" {
 			if pattern.HasProNext() {
 				n := p.ProLen() - pattern.Next().ProLen()
-				if n < 0 { // the remaining symbols in 'Current' is less than 'pattern'
+				if n < 0 { // the remaining symbols in 'p' is less than 'pattern'
 					return false
 				}
 				// The first n symbols will go into 'ww'
@@ -868,8 +855,8 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 			break
 		}
 		m[sym] = p.Val()
-	case 'l':
-		if lst := pattern.Val().L(); lst.Val().Type() == 'y' && lst.Val().S() == "quote" {
+	case LIST:
+		if lst := pattern.Val().L(); lst.Val().Type() == SYM && lst.Val().S() == "quote" {
 			if __exec(lst.Next().Val(), execState{
 				debug: state.debug,
 				local: &Context{parent: state.local, m: map[string]Value{"_": p.Val()}},
@@ -904,9 +891,7 @@ func (p *Pair) ProTake(n int) *Pair {
 		}
 	}
 	if n == -1 {
-		if b.last == nil {
-			panic("take(-1): empty list")
-		}
+		panicif(b.last == nil, "take(-1): empty list")
 		*b.last = *Empty
 	} else if b.Len != n {
 		panic(fmt.Errorf("take: not enough values to take, need %d out of %d", n, b.Len))
@@ -935,33 +920,27 @@ func (p *Pair) IsProperList() bool {
 	}
 }
 func (p *Pair) Car() Value {
-	if p.Empty() {
-		panic("car: empty list")
-	}
+	panicif(p.Empty(), "car: empty list")
 	return p.Val()
 }
 func (p *Pair) Cdr() Value {
 	p = p.Next()
-	if p == nil {
-		panic("cdr: empty list")
-	}
+	panicif(p == nil, "cdr: empty list")
 	if p.Improper() {
 		return p.Val()
 	}
 	return L(p)
 }
 func (p *Pair) SetCdr(v Value) *Pair {
-	if p.Empty() {
-		panic("cdr: empty list")
-	}
+	panicif(p.Empty(), "cdr: empty list")
 	if v.Type() == LIST {
 		p.setNext(v.L())
 	} else {
-		p.setNext((&Pair{}).setVal(v))
+		p.setNext(pval(v))
 	}
 	return p
 }
-func Cons(v, v2 Value) *Pair { return (&Pair{}).setVal(v).SetCdr(v2) }
+func Cons(v, v2 Value) *Pair { return pval(v).SetCdr(v2) }
 
 type ListBuilder struct {
 	Len                 int
@@ -974,9 +953,7 @@ func InitListBuilder() ListBuilder {
 	return b
 }
 func (b ListBuilder) Append(v Value) ListBuilder {
-	if !b.Current._empty {
-		panic("append to improper list")
-	}
+	panicif(!b.Current._empty, "append to improper list")
 	b.Current.setVal(v).setNext(&Pair{_empty: true})._empty = false
 	b.last = b.Current
 	b.Current = b.Current.Next()

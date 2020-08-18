@@ -149,7 +149,7 @@ func (v *Value) unmarshal(p interface {
 		if v2.Type() != 's' {
 			panic(fmt.Errorf("invalid symbol binary data"))
 		}
-		*v = Sy(v2.S(), uint32(line))
+		*v = Y(v2.S(), uint32(line))
 	case 's':
 		ln, err := binary.ReadVarint(p)
 		panicerr(err)
