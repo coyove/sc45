@@ -190,7 +190,7 @@ func init() {
 		fn := L(Empty, s.Caller.Y("lambda"), L(Empty, names...), L(s.Args, s.Caller.Y("if"), Void, Void))
 		s.Out = L(L(Empty, values...).L(), fn)
 	})).Store("eval", NewFunc(1, func(s *State) {
-		s.Out = __exec(s.In(), execState{local: s.Context, debug: s.Debug})
+		s.Out = __exec(s.In(), execState{local: s.Context, debug: s.Stack})
 	})).Store("parse", NewFunc(1, func(s *State) {
 		x := s.InType('s').S()
 		if _, err := os.Stat(x); err == nil {
@@ -230,18 +230,18 @@ func init() {
 	})).Store("length", NewFunc(1, func(s *State) {
 		s.Out = N(float64(s.InType(LIST).L().ProLen()))
 	})).Store("pcall", NewFunc(2, func(s *State) {
-		rc, old := s.In(), s.Debug.Frames
+		rc, old := s.In(), s.Stack.Frames
 		defer func() {
 			if r := recover(); r != nil {
 				if rc.Type() != FUNC {
 					s.Out = V(r)
 				} else {
-					s.Out = ev2(rc.F().Call(s.Debug, V(r)))
+					s.Out = ev2(rc.F().Call(s.Stack, V(r)))
 				}
-				s.Debug.Frames = old
+				s.Stack.Frames = old
 			}
 		}()
-		s.Out = __exec(L(Empty, s.In().Quote()), execState{debug: s.Debug, local: s.Context})
+		s.Out = __exec(L(Empty, s.In().Quote()), execState{debug: s.Stack, local: s.Context})
 	})).Store("apply", NewFunc(2, func(s *State) {
 		expr := InitListBuilder().Append(s.InType('f').Quote())
 		s.InType(LIST).L().ProRange(func(v Value) bool { expr = expr.Append(v.Quote()); return true })
@@ -435,7 +435,7 @@ func init() {
 	Default.Store("vector-foreach", NewFunc(2, func(s *State) {
 		rl, fn := reflect.ValueOf(s.In().V()), s.InType('f')
 		for i := 0; i < rl.Len(); i++ {
-			flag, err := fn.F().Call(s.Debug, N(float64(i)), V(rl.Index(i).Interface()))
+			flag, err := fn.F().Call(s.Stack, N(float64(i)), V(rl.Index(i).Interface()))
 			s.assert(err == nil || s.panic("invalid callback "))
 			if flag.IsFalse() {
 				break
@@ -445,7 +445,7 @@ func init() {
 	Default.Store("map", NewFunc(2, func(s *State) {
 		fn, r, l, i := s.InType('f'), []Value{}, s.InType(LIST).L(), 0
 		l.ProRange(func(h Value) bool {
-			v, err := fn.F().Call(s.Debug, h)
+			v, err := fn.F().Call(s.Stack, h)
 			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
 			r = append(r, v)
 			i++
@@ -457,7 +457,7 @@ func init() {
 		fn, left, l, i := s.InType('f'), s.In(), s.InType(LIST).L(), 0
 		var err error
 		l.ProRange(func(h Value) bool {
-			left, err = fn.F().Call(s.Debug, left, h)
+			left, err = fn.F().Call(s.Stack, left, h)
 			s.assert(err == nil || s.panic("reduce: error at element #%d: %v", i, err))
 			i++
 			return true
@@ -468,7 +468,7 @@ func init() {
 		fn, right, rl := s.InType('f'), s.In(), s.InType(LIST).L().ProSlice()
 		var err error
 		for i := len(rl) - 1; i >= 0; i-- {
-			right, err = fn.F().Call(s.Debug, right, rl[i])
+			right, err = fn.F().Call(s.Stack, right, rl[i])
 			s.assert(err == nil || s.panic("reduce-right: error at element #%d: %v", i, err))
 		}
 		s.Out = right

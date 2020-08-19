@@ -1,12 +1,10 @@
 (let ((foo (lambda args (match args ()
-	(#:string '(<= _ 2)) "str,<=2"
-	(#:string '(> _ 2)) (+ "str,>2" (number->string _))
-	(#:number) "num"
+	('(<= _ 2)) "str,<=2"
+	('(> _ 2)) (+ "str,>2" (number->string _))
 	(*) "whaat?")))) 
 
-		(assert (= (foo "aa" 1) "str,<=2"))
-		(assert (= (foo "bb" 3) "str,>23"))
-		(assert (= (foo 0) "num"))
+		(assert (= (foo 1) "str,<=2"))
+		(assert (= (foo 3) "str,>23"))
         (display "wtf")
 		(assert (= (foo) "whaat?")))
 

@@ -82,7 +82,7 @@ func TestOne(t *testing.T) {
 		}
 	}))
 	it.Store("current-location", NewFunc(0, func(s *State) {
-		locs := s.Debug.StackLocations(false)
+		locs := s.Stack.StackLocations(false)
 		fmt.Println(locs)
 		s.Out = S(locs[len(locs)-1])
 	}))
@@ -123,7 +123,7 @@ func TestOne(t *testing.T) {
 		m := s.InMap()
 		f := s.InType('f')
 		for k, v := range m {
-			err, _ := f.F().Call(s.Debug, S(k), v)
+			err, _ := f.F().Call(s.Stack, S(k), v)
 			if err.IsFalse() {
 				s.Out = v
 				return
@@ -154,6 +154,11 @@ func TestOne(t *testing.T) {
 
 	{
 		_, err := it.Run(`(define foo (eval (parse "s/module.scm"))) 
+((lambda ()
+	((lambda (a) (assert #f) 10) 0)
+	12
+	))
+
 (define m# (lambda-syntax whatever (foo 10)))
 (m#)
 		`)

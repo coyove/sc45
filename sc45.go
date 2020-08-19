@@ -22,7 +22,6 @@ var (
 	Void, Quote   = Value{}, Y("quote", 0)
 	Empty         = &Pair{_empty: true}
 	Types         = map[ValueType]string{STR: "string", SYM: "symbol", NUM: "number", LIST: "list", ANY: "any", FUNC: "function", VOID: "void", BOOL: "boolean"}
-	TypesRev      = map[string]ValueType{"string": STR, "symbol": SYM, "number": NUM, "list": LIST, "any": ANY, "function": FUNC, "void": VOID, "boolean": BOOL}
 )
 
 const STR, SYM, NUM, BOOL, LIST, ANY, FUNC, VOID ValueType = 's', 'y', 'n', 'b', 'l', 'i', 'f', 'v'
@@ -58,7 +57,7 @@ type (
 		argLast     Value
 		Args        *Pair
 		Out, Caller Value
-		Debug       *Stack
+		Stack       *Stack
 	}
 	Context struct {
 		assertable
@@ -112,8 +111,8 @@ func (s *Stack) StackLocations(includeBuiltin bool) (locs []string) {
 func (s *Stack) LastLocation() string { return s.Frames[len(s.Frames)-1].Loc }
 func (s *Stack) String() (p string) {
 	for _, k := range s.Frames {
-		if sym := k.K.findSym(); sym != Void && sym.LineInfo() > 0 {
-			p = sym.S() + " in " + k.Loc + ":" + strconv.FormatInt(int64(sym.LineInfo()), 10) + "\n" + p
+		if sym, li := k.K.findSym(0); sym != "" && li > 0 {
+			p = sym + " in " + k.Loc + ":" + strconv.FormatInt(int64(li), 10) + "\n" + p
 		}
 	}
 	return strings.TrimSpace(p)
@@ -173,7 +172,7 @@ func (ctx *Context) set(k string, v Value) {
 }
 
 func (ctx *Context) Store(k string, v Value) *Context {
-	if v.Type() == FUNC && v.F().nat == Void {
+	if v.Type() == FUNC && v.F().fun != nil {
 		v.F().name = k
 	}
 	if _, mv := ctx.find(k); mv == nil {
@@ -268,7 +267,7 @@ TAIL_CALL:
 
 	if head.Type() == SYM {
 		switch va := head.S(); va {
-		case "if":
+		case "if", "lambda-body":
 			state.assert(c.MoveProNext(&c) || state.panic("invalid if syntax, missing condition"))
 			if !__exec(c.Val(), state).IsFalse() {
 				state.assert(c.MoveProNext(&c) || state.panic("invalid if syntax, missing true branch"))
@@ -306,7 +305,7 @@ TAIL_CALL:
 			}
 			state.assert(c.MoveProNext(&c) || state.panic("invalid lambda syntax, missing lambda body"))
 			if f.nat = c.Val(); c.HasProNext() {
-				f.nat = L(c, Y("if", 0), Void, Void)
+				f.nat = L(c, head.Y("lambda-body"), Void, Void)
 			}
 			return state.debug.popAndReturn(F(f))
 		case "match":
@@ -397,19 +396,17 @@ TAIL_CALL:
 		goto TAIL_CALL
 	}
 
-	s := State{Context: state.local, Out: Void, Caller: head, Debug: state.debug}
 	args := InitListBuilder()
 	c.Next().ProRange(func(v Value) bool { args = args.Append(__exec(v, state)); return true })
-
 	state.assert(args.Len == cc.funMinArgNum || (cc.variadic && args.Len >= cc.funMinArgNum) ||
 		state.panic("call: expect "+ifstr(cc.variadic, "at least ", "")+strconv.Itoa(cc.funMinArgNum)+" arguments"))
 
-	s.Args = args.head
+	s := State{Context: state.local, Out: Void, Caller: head, Stack: state.debug, Args: args.head}
 	cc.fun(&s)
 	return state.debug.popAndReturn(s.Out)
 }
 
-func (ctx *Context) Parse(filename, text string) (expr Value, err error) {
+func (ctx *Context) Parse(filename, text string) (v Value, err error) {
 	s := (&scanner.Scanner{}).Init(strings.NewReader(text))
 	s.Mode &^= scanner.ScanChars | scanner.ScanRawStrings
 	s.Error = func(s *scanner.Scanner, msg string) {
@@ -420,15 +417,14 @@ func (ctx *Context) Parse(filename, text string) (expr Value, err error) {
 		err = fmt.Errorf("parse: %s at %s:%d:%d", msg, filename, pos.Line, pos.Column)
 	}
 
-	v := func() Value {
+	if v = func() Value {
 		defer func() {
 			if r := recover(); r != nil {
 				err = fmt.Errorf("parse: %v at %s:%d:%d", r, filename, s.Pos().Line, s.Pos().Column)
 			}
 		}()
 		return ctx.scan(s, false)
-	}()
-	if err != nil {
+	}(); err != nil {
 		return Void, err
 	}
 
@@ -468,12 +464,6 @@ func (ctx *Context) RunFile(path string) (result Value, err error) {
 	if err != nil {
 		return Void, err
 	}
-	// buf, err = c.L().V().NewFunc().n.Marshal()
-	// panicerr(err)
-	// {
-	// 	c := Void
-	// 	fmt.Println(c.Unmarshal(buf))
-	// }
 	return ctx.Exec(c)
 }
 
@@ -710,18 +700,16 @@ func (v Value) Type() ValueType {
 		return BOOL
 	case uint64(LIST), uint64(FUNC), uint64(STR):
 		return ValueType(v.val)
-	default:
-		if v.val >= 1<<51 {
-			if v.val < 1<<52-1 {
-				return SYM
-			}
-			return NUM
-		}
-		if v == Void {
-			return VOID
-		}
-		return ANY
 	}
+	if v.val >= 1<<51 {
+		if v.val < 1<<52-1 {
+			return SYM
+		}
+		return NUM
+	} else if v == Void {
+		return VOID
+	}
+	return ANY
 }
 func (v Value) stringify(goStyle bool) string {
 	switch v.Type() {
@@ -732,19 +720,11 @@ func (v Value) stringify(goStyle bool) string {
 	case SYM:
 		return v.S() + ifstr(v.LineInfo() > 0, fmt.Sprintf(ifstr(goStyle, " /*L%d*/", " #|L%d|#"), v.LineInfo()), "")
 	case LIST:
-		vl, p := v.L(), bytes.NewBufferString("(")
-		for vl != nil && !vl._empty {
-			if vl.Next() == nil {
-				p.WriteString(". ")
-				p.WriteString(vl.Val().stringify(goStyle))
-			} else {
-				p.WriteString(vl.Val().stringify(goStyle))
-				p.WriteString(" ")
-			}
-			vl = vl.Next()
-		}
-		for p.Len() > 0 && p.Bytes()[p.Len()-1] == ' ' {
-			p.Truncate(p.Len() - 1)
+		vl, p := v.L(), bytes.NewBufferString("( ")
+		for ; vl != nil && !vl._empty; vl = vl.Next() {
+			p.WriteString(ifstr(vl.Next() == nil, ". ", ""))
+			p.WriteString(vl.Val().stringify(goStyle))
+			p.WriteString(" ")
 		}
 		p.WriteString(")")
 		return p.String()
@@ -793,21 +773,21 @@ func (v Value) Equals(v2 Value) bool {
 	}
 	return false
 }
-func (v Value) findSym() Value {
+func (v Value) findSym(depth int) (string, uint32) {
 	if t := v.Type(); t == SYM {
-		return v
+		return strings.Repeat("(", depth) + v.S() + strings.Repeat(" ...)", depth), v.LineInfo()
 	} else if t == LIST {
-		return v.L().Val().findSym()
+		return v.L().Val().findSym(depth + 1)
 	}
-	return Void
+	return "", 0
 }
 func (v Value) F() *Func                  { return (*Func)(v.ptr) }
 func (v Value) B() bool                   { return v.val == 2 }
 func (v Value) N() float64                { return math.Float64frombits(^v.val) }
 func (v Value) S() string                 { return *(*string)(v.ptr) }
 func (v Value) L() *Pair                  { return (*Pair)(v.ptr) }
-func (v Value) Y(text string) Value       { return Y(text, uint32(v.Type()/SYM)*v.LineInfo()) }
 func (v Value) A() interface{}            { return *(*interface{})(unsafe.Pointer(&v)) }
+func (v Value) Y(text string) Value       { return Y(text, uint32(v.Type()/SYM)*v.LineInfo()) }
 func (v Value) LineInfo() uint32          { return uint32(v.val) }
 func (v Value) String() string            { return v.stringify(false) }
 func (v Value) GoString() string          { return fmt.Sprintf("{val:%016x ptr:%016x}", v.val, v.ptr) }
@@ -901,11 +881,7 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 			return true
 		}
 		if strings.HasPrefix(sym, "#:") {
-			if x := TypesRev[sym[2:]]; x > 0 {
-				if p.Val().Type() != x {
-					return false
-				}
-			} else if !p.Val().Equals(pattern.Val()) {
+			if !p.Val().Equals(pattern.Val()) {
 				return false
 			}
 			break
