@@ -230,14 +230,15 @@ func init() {
 	})).Store("length", NewFunc(1, func(s *State) {
 		s.Out = N(float64(s.InType(LIST).L().ProLen()))
 	})).Store("pcall", NewFunc(2, func(s *State) {
-		rc := s.In()
+		rc, old := s.In(), s.Debug.Frames
 		defer func() {
 			if r := recover(); r != nil {
-				if rc.Type() != 'f' {
+				if rc.Type() != FUNC {
 					s.Out = V(r)
 				} else {
-					s.Out = ev2(rc.F().Call(V(r)))
+					s.Out = ev2(rc.F().Call(s.Debug, V(r)))
 				}
+				s.Debug.Frames = old
 			}
 		}()
 		s.Out = __exec(L(Empty, s.In().Quote()), execState{debug: s.Debug, local: s.Context})
@@ -434,7 +435,7 @@ func init() {
 	Default.Store("vector-foreach", NewFunc(2, func(s *State) {
 		rl, fn := reflect.ValueOf(s.In().V()), s.InType('f')
 		for i := 0; i < rl.Len(); i++ {
-			flag, err := fn.F().Call(N(float64(i)), V(rl.Index(i).Interface()))
+			flag, err := fn.F().Call(s.Debug, N(float64(i)), V(rl.Index(i).Interface()))
 			s.assert(err == nil || s.panic("invalid callback "))
 			if flag.IsFalse() {
 				break
@@ -444,7 +445,7 @@ func init() {
 	Default.Store("map", NewFunc(2, func(s *State) {
 		fn, r, l, i := s.InType('f'), []Value{}, s.InType(LIST).L(), 0
 		l.ProRange(func(h Value) bool {
-			v, err := fn.F().Call(h)
+			v, err := fn.F().Call(s.Debug, h)
 			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
 			r = append(r, v)
 			i++
@@ -456,7 +457,7 @@ func init() {
 		fn, left, l, i := s.InType('f'), s.In(), s.InType(LIST).L(), 0
 		var err error
 		l.ProRange(func(h Value) bool {
-			left, err = fn.F().Call(left, h)
+			left, err = fn.F().Call(s.Debug, left, h)
 			s.assert(err == nil || s.panic("reduce: error at element #%d: %v", i, err))
 			i++
 			return true
@@ -467,7 +468,7 @@ func init() {
 		fn, right, rl := s.InType('f'), s.In(), s.InType(LIST).L().ProSlice()
 		var err error
 		for i := len(rl) - 1; i >= 0; i-- {
-			right, err = fn.F().Call(right, rl[i])
+			right, err = fn.F().Call(s.Debug, right, rl[i])
 			s.assert(err == nil || s.panic("reduce-right: error at element #%d: %v", i, err))
 		}
 		s.Out = right

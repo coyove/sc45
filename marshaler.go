@@ -41,8 +41,8 @@ func (v Value) Marshal() (buf []byte, err error) {
 	}()
 	p := &bytes.Buffer{}
 	if v.Type() == 'l' && !v.L()._empty && v.L().Next() == Empty {
-		if v2 := v.L().Val(); v2.Type() == 'f' && v2.F().wrapper {
-			v = v2.F().n
+		if v2 := v.L().Val(); v2.Type() == 'f' && v2.F().funToplevel {
+			v = v2.F().nat
 		}
 	}
 	v.marshal(p)

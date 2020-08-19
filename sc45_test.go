@@ -123,7 +123,7 @@ func TestOne(t *testing.T) {
 		m := s.InMap()
 		f := s.InType('f')
 		for k, v := range m {
-			err, _ := f.F().Call(S(k), v)
+			err, _ := f.F().Call(s.Debug, S(k), v)
 			if err.IsFalse() {
 				s.Out = v
 				return
@@ -145,18 +145,19 @@ func TestOne(t *testing.T) {
 	// assert(`(define foo (eval (parse "s/module.scm")))
 	// (eval '(foo (lambda () (display (current-location)) (assert (substring? (current-location) "memory")) )))`)
 
-	// {
-	// 	_, err := it.Run(`(define foo (eval (parse "s/module.scm"))) (eval '(foo 99))`)
-	// 	if !strings.Contains(err.Error(), "(s/module.scm)") {
-	// 		t.Fatal(err)
-	// 	}
-	// }
+	{
+		_, err := it.Run(`(define foo (eval (parse "s/module.scm"))) (eval '(foo 99))`)
+		if !strings.Contains(err.Error(), "s/module.scm") {
+			t.Fatal(err)
+		}
+	}
 
 	{
 		_, err := it.Run(`(define foo (eval (parse "s/module.scm"))) 
 (define m# (lambda-syntax whatever (foo 10)))
 (m#)
 		`)
+		t.Log(err)
 		if !strings.Contains(err.Error(), "s/module.scm") {
 			t.Fatal(err)
 		}
