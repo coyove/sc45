@@ -32,3 +32,16 @@
                        (1 "A")
                        (2 "B"))))
   (assert (= counter 1)))
+
+(define for (lambda-syntax args
+                            (match args ()
+                                   [v start end body*]
+                                   `(letrec ((foo (lambda (current)
+                                                    (if (< current ,end)
+                                                      (begin
+                                                        (define ,v current)
+                                                        ,@body
+                                                        (set! current (+ current 1))
+                                                        (foo current))))))
+                                      (foo ,start)))))
+(for a 0 10 (display a))

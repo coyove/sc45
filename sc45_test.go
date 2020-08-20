@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 type dummy struct {
@@ -66,7 +68,7 @@ func TestMarshal(t *testing.T) {
 
 func TestNumber(t *testing.T) {
 	check := func(n Value, v float64) {
-		if n.Type() != NUM || n.N() != v {
+		if vf, _, _ := n.N(); n.Type() != NUM || vf != v {
 			t.Fatal(n.GoString(), v)
 		}
 	}
@@ -75,6 +77,20 @@ func TestNumber(t *testing.T) {
 	check(N(math.Inf(-1)), math.Inf(-1))
 	check(N(math.MaxFloat64), math.MaxFloat64)
 	check(N(-math.MaxFloat64), -math.MaxFloat64)
+
+	rand.Seed(time.Now().Unix())
+	for i := 0; i < 1e6; i++ {
+		x := rand.Int63()
+		v := I(x)
+		if v.Type() != NUM || v.I() != x {
+			t.FailNow()
+		}
+	}
+
+	var v uint64 = 0x8ffffffffffffff7
+	if I(int64(v)).Equals(N(math.Float64frombits(^v))) {
+		t.Fatal("check Value.Equals")
+	}
 }
 
 func TestOne(t *testing.T) {
@@ -127,7 +143,7 @@ func TestOne(t *testing.T) {
 		s.Out = V(l)
 	}))
 	it.Store("make/list", NewFunc(1, func(s *State) {
-		l := make([]Value, int(s.InType('n').N()))
+		l := make([]Value, s.InType('n').I())
 		for i := 0; i < len(l); i++ {
 			l[i] = N(float64(i) + 1)
 		}
@@ -137,7 +153,7 @@ func TestOne(t *testing.T) {
 		m := s.InMap()
 		f := s.InType('f')
 		for k, v := range m {
-			err, _ := f.K().Call(s.Stack, S(k), v)
+			err, _ := f.F().Call(s.Stack, S(k), v)
 			if err.IsFalse() {
 				s.Out = v
 				return

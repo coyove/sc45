@@ -9,7 +9,7 @@
 
 (assert (= 0x3fffffffffffff (+ 0x3ffffffffffffe 1)))
 (assert (= 36028797018963964 (* 0x3ffffffffffffe 2)))
-(assert (< 0x7ffffffffffffe 0x7fffffffffffff))
+(assert (< 0x7ffffffffffffe (string->number "0x7fffffffffffff")))
 
 (assert (= 2 (pcall (lambda (e) (+ e 1)) (lambda () (assert (= 1 1)) (raise 1) (* 3 4)))))
 (assert (<= 1 2 2 4))

@@ -177,8 +177,8 @@ func (ctx *Context) set(k string, v Value) {
 }
 
 func (ctx *Context) Store(k string, v Value) *Context {
-	if v.Type() == FUNC && v.K().fun != nil {
-		v.K().name = k
+	if v.Type() == FUNC && v.F().fun != nil {
+		v.F().name = k
 	}
 	if _, mv := ctx.find(k); mv == nil {
 		ctx.set(k, v)
@@ -233,7 +233,13 @@ func __execQuasi(expr Value, state execState) (Value, *Pair) {
 		results := InitListBuilder()
 		for ; !lst.ProEmpty(); lst = lst.Next() {
 			if v, p := __execQuasi(lst.Val(), state); p != nil {
-				*results.Current = *p
+				for ; p != nil; p = p.Next() {
+					*results.Current = *p
+					if !p.Empty() && !p.Improper() {
+						results.Current.setNext(&Pair{_empty: true})
+						results.Current = results.Current.Next()
+					}
+				}
 			} else {
 				results = results.Append(v)
 			}
@@ -380,7 +386,7 @@ TAIL_CALL:
 
 	fn := __exec(head, state)
 	state.assert(fn.Type() == FUNC || state.panic("invalid function: %v", head))
-	cc := fn.K()
+	cc := fn.F()
 	state.debug.nextLoc = (cc.location)
 
 	if cc.fun == nil {
@@ -503,13 +509,13 @@ LOOP:
 				s.Scan()
 				switch n := scanToDelim(s); strings.ToLower(n) {
 				case "space", "newline", "return", "tab", "backspace", "alert", "form", "backslash":
-					comp = comp.Append(N(float64(map[string]rune{
+					comp = comp.Append(I(int64(map[string]rune{
 						"space": ' ', "newline": '\n', "return": '\r', "tab": '\t', "backspace": '\b', "alert": '\a', "form": '\f', "backslash": '\\',
 					}[strings.ToLower(n)])))
 				default:
 					r, l := utf8.DecodeRuneInString(n)
 					ctx.assert(l != 0 || ctx.panic("invalid char: %q", n))
-					comp = comp.Append(N(float64(r)))
+					comp = comp.Append(I(int64(r)))
 				}
 			case 't', 'f':
 				s.Scan()
@@ -587,7 +593,7 @@ func (ctx *Context) unwrapMacro(v Value, quasi bool, stack *Stack) Value {
 			if quasi {
 				return v
 			}
-			if m, _ := ctx.Load(head.S()); m.Type() == FUNC && m.K().macro {
+			if m, _ := ctx.Load(head.S()); m.Type() == FUNC && m.F().macro {
 				args := InitListBuilder().Append(head)
 				for comp.MoveProNext(&comp); !comp.ProEmpty(); comp.MoveProNext(&comp) {
 					args = args.Append(ctx.unwrapMacro(comp.Val(), false, stack).Quote())
@@ -640,7 +646,7 @@ func panicif(v bool, t string) {
 }
 
 // V creates Value from interface{}
-func V(v interface{}) Value {
+func V(v interface{}) (va Value) {
 	if v, ok := v.(Value); ok {
 		return v
 	}
@@ -660,7 +666,6 @@ func V(v interface{}) Value {
 	case reflect.Bool:
 		return B(rv.Bool())
 	}
-	va := Value{}
 	*(*interface{})(unsafe.Pointer(&va)) = v
 	return va
 }
@@ -722,7 +727,7 @@ func (v Value) Type() ValueType {
 func (v Value) stringify(goStyle bool) string {
 	switch v.Type() {
 	case NUM:
-		vf, vi, vIsInt := v.NumberBestGuess()
+		vf, vi, vIsInt := v.N()
 		if vIsInt {
 			return strconv.FormatInt(vi, 10)
 		}
@@ -745,7 +750,7 @@ func (v Value) stringify(goStyle bool) string {
 	case ANY:
 		return "#" + fmt.Sprint(v.A())
 	case FUNC:
-		return v.K().String()
+		return v.F().String()
 	default:
 		return ifstr(goStyle, "nil", "#v")
 	}
@@ -753,7 +758,7 @@ func (v Value) stringify(goStyle bool) string {
 func (v Value) V() interface{} {
 	switch v.Type() {
 	case NUM:
-		vf, vi, vIsInt := v.NumberBestGuess()
+		vf, vi, vIsInt := v.N()
 		if vIsInt {
 			return vi
 		}
@@ -769,7 +774,7 @@ func (v Value) V() interface{} {
 	case ANY:
 		return v.A()
 	case FUNC:
-		return v.K()
+		return v.F()
 	default:
 		return nil
 	}
@@ -780,13 +785,7 @@ func (v Value) Equals(v2 Value) bool {
 	} else if vflag, v2flag := v.Type(), v2.Type(); vflag == v2flag {
 		switch vflag {
 		case NUM:
-			if v.ptr == nil && v2.ptr == nil {
-				return v.val == v2.val
-			}
-			if v.ptr != nil && v2.ptr != nil {
-				return *(*int64)(v.ptr) == *(*int64)(v2.ptr)
-			}
-			return v.N() == v2.N()
+			return v.val == v2.val && v.ptr == v2.ptr
 		case SYM, STR:
 			return v.S() == v2.S()
 		case ANY:
@@ -803,7 +802,20 @@ func (v Value) findSym(depth int) (string, uint32) {
 	}
 	return "", 0
 }
-func (v Value) K() *Func            { return (*Func)(v.ptr) }
+func (v Value) N() (floatVal float64, intVal int64, isInt bool) {
+	if v.ptr == int64Marker {
+		return float64(int64(v.val)), int64(v.val), true
+	}
+	f := math.Float64frombits(^v.val)
+	return f, int64(f), float64(int64(f)) == f
+}
+func (v Value) I() int64 {
+	if v.ptr == int64Marker {
+		return int64(v.val)
+	}
+	return int64(math.Float64frombits(^v.val))
+}
+func (v Value) F() *Func            { return (*Func)(v.ptr) }
 func (v Value) B() bool             { return v.val == 2 }
 func (v Value) S() string           { return *(*string)(v.ptr) }
 func (v Value) L() *Pair            { return (*Pair)(v.ptr) }
@@ -813,25 +825,6 @@ func (v Value) LineInfo() uint32    { return uint32(v.val) }
 func (v Value) String() string      { return v.stringify(false) }
 func (v Value) GoString() string    { return fmt.Sprintf("{val:%016x ptr:%016x}", v.val, v.ptr) }
 func (v Value) IsFalse() bool       { return v.val < 2 } // 0: void, 1: false
-func (v Value) NumberBestGuess() (vf float64, vi int64, vIsInt bool) {
-	if v.ptr == int64Marker {
-		return float64(int64(v.val)), int64(v.val), true
-	}
-	f := math.Float64frombits(^v.val)
-	return f, int64(f), float64(int64(f)) == f
-}
-func (v Value) N() float64 {
-	if v.ptr == int64Marker {
-		return float64(int64(v.val))
-	}
-	return math.Float64frombits(^v.val)
-}
-func (v Value) I() int64 {
-	if v.ptr == int64Marker {
-		return int64(v.val)
-	}
-	return int64(math.Float64frombits(^v.val))
-}
 
 func pval(v Value) *Pair               { return (&Pair{}).setVal(v) }
 func (p *Pair) Val() Value             { return p.val }
@@ -976,8 +969,8 @@ func (p *Pair) ProAppend(l2 *Pair) *Pair {
 	*b.Current = *l2
 	return b.head
 }
-func (p *Pair) ProLast() (last *Pair) {
-	for ; !p.ProEmpty(); p = p.Next() {
+func (p *Pair) Last() (last *Pair) {
+	for ; p != nil && !p.Empty(); p = p.Next() {
 		last = p
 	}
 	return

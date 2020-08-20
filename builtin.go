@@ -157,7 +157,7 @@ func init() {
 	})).Store("-", NewFunc(1|Vararg, func(s *State) {
 		a := s.InType('n')
 		if s.Args.ProEmpty() {
-			af, ai, aIsInt := a.NumberBestGuess()
+			af, ai, aIsInt := a.N()
 			if aIsInt {
 				s.Out = I(-ai)
 			} else {
@@ -223,13 +223,13 @@ func init() {
 	})).Store("last", NewFunc(1, func(s *State) {
 		l := s.InType(LIST).L()
 		s.assert(!l.ProEmpty() || s.panic("last: empty list"))
-		s.Out = l.ProLast().Val()
+		s.Out = l.Last().Val()
 	})).Store("init", NewFunc(1, func(s *State) {
 		l := s.InType(LIST).L()
 		s.assert(!l.ProEmpty() || s.panic("init: empty list"))
 		s.Out = L(l.ProTake(-1))
 	})).Store("length", NewFunc(1, func(s *State) {
-		s.Out = N(float64(s.InType(LIST).L().ProLen()))
+		s.Out = I(int64(s.InType(LIST).L().ProLen()))
 	})).Store("pcall", NewFunc(2, func(s *State) {
 		rc, old := s.In(), s.Stack.Frames
 		defer func() {
@@ -237,7 +237,7 @@ func init() {
 				if rc.Type() != FUNC {
 					s.Out = V(r)
 				} else {
-					s.Out = ev2(rc.K().Call(s.Stack, V(r)))
+					s.Out = ev2(rc.F().Call(s.Stack, V(r)))
 				}
 				s.Stack.Frames = old
 			}
@@ -251,15 +251,22 @@ func init() {
 		s.Out = v
 	})).
 		Store("raise", NewFunc(1, func(s *State) { panic(s.In()) })).
-		Store("string->number", NewFunc(1, func(s *State) { s.Out = ev2(strconv.ParseFloat(s.InType('s').S(), 64)) })).
 		Store("symbol->string", NewFunc(1, func(s *State) { s.Out = S(s.InType(SYM).S()) })).
-		Store("number->string", NewFunc(1, func(s *State) { s.Out = S(strconv.FormatFloat(s.InType('n').N(), 'f', -1, 64)) })).
+		Store("number->string", NewFunc(1, func(s *State) { s.Out = S(fmt.Sprint(s.InType('n').V())) })).
 		Store("string->symbol", NewFunc(1, func(s *State) { s.Out = Y(s.InType('s').S(), 0) })).
 		Store("string->error", NewFunc(1, func(s *State) { s.Out = V(fmt.Errorf(s.InType('s').S())) })).
 		Store("error?", NewFunc(1, func(s *State) { _, ok := s.In().V().(error); s.Out = B(ok) })).
 		Store("null?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == LIST && s.LastIn().L().ProEmpty()) })).
 		Store("list?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == LIST && s.LastIn().L().IsProperList()) })).
 		Store("void?", NewFunc(1, func(s *State) { s.Out = B(s.In() == Void) })).Store("pair?", _Ft(LIST)).Store("symbol?", _Ft(SYM)).Store("boolean?", _Ft('b')).Store("number?", _Ft('n')).Store("string?", _Ft('s')).
+		Store("string->number", NewFunc(1, func(s *State) {
+			x := s.InType('s').S()
+			if v, err := strconv.ParseInt(x, 0, 64); err == nil {
+				s.Out = I(v)
+			} else {
+				s.Out = ev2(strconv.ParseFloat(x, 64))
+			}
+		})).
 		Store("stringify", NewFunc(1, func(s *State) { s.Out = S(s.In().String()) }))
 	Default.Store("letrec", NewFunc(1|Vararg|Macro, func(s *State) {
 		/* Unwrap to:
@@ -339,7 +346,7 @@ func init() {
 		s.Out = ret.Build()
 	}))
 
-	Default.Store("string-length", NewFunc(1, func(s *State) { s.Out = N(float64(len(s.InType('s').S()))) }))
+	Default.Store("string-length", NewFunc(1, func(s *State) { s.Out = I(int64(len(s.InType('s').S()))) }))
 	Default.Store("substring?", NewFunc(2, func(s *State) { s.Out = B(strings.Contains(s.InType('s').S(), s.InType('s').S())) }))
 	// 	Default.Install("skip", 2, func(s *State) {
 	// 		l := s.In(1, LIST).L()
@@ -401,7 +408,7 @@ func init() {
 	Default.Store("vector-strings", NewFunc(1, func(s *State) { s.Out = V(make([]string, s.InType('n').I())) }))
 	Default.Store("vector-ints", NewFunc(1, func(s *State) { s.Out = V(make([]int, s.InType('n').I())) }))
 	Default.Store("vector-int64s", NewFunc(1, func(s *State) { s.Out = V(make([]int64, s.InType('n').I())) }))
-	Default.Store("vector-len", NewFunc(1, func(s *State) { s.Out = N(float64((reflect.ValueOf(s.In().V()).Len()))) }))
+	Default.Store("vector-len", NewFunc(1, func(s *State) { s.Out = I(int64((reflect.ValueOf(s.In().V()).Len()))) }))
 	Default.Store("vector-null?", NewFunc(1, func(s *State) { s.Out = B(reflect.ValueOf(s.In().V()).Len() == 0) }))
 	Default.Store("vector-nth", NewFunc(2, func(s *State) {
 		rm := reflect.ValueOf(s.In().V())
@@ -427,7 +434,7 @@ func init() {
 	Default.Store("vector-foreach", NewFunc(2, func(s *State) {
 		rl, fn := reflect.ValueOf(s.In().V()), s.InType('f')
 		for i := 0; i < rl.Len(); i++ {
-			flag, err := fn.K().Call(s.Stack, N(float64(i)), V(rl.Index(i).Interface()))
+			flag, err := fn.F().Call(s.Stack, I(int64(i)), V(rl.Index(i).Interface()))
 			s.assert(err == nil || s.panic("invalid callback "))
 			if flag.IsFalse() {
 				break
@@ -437,7 +444,7 @@ func init() {
 	Default.Store("map", NewFunc(2, func(s *State) {
 		fn, r, l, i := s.InType('f'), []Value{}, s.InType(LIST).L(), 0
 		l.ProRange(func(h Value) bool {
-			v, err := fn.K().Call(s.Stack, h)
+			v, err := fn.F().Call(s.Stack, h)
 			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
 			r = append(r, v)
 			i++
@@ -449,7 +456,7 @@ func init() {
 		fn, left, l, i := s.InType('f'), s.In(), s.InType(LIST).L(), 0
 		var err error
 		l.ProRange(func(h Value) bool {
-			left, err = fn.K().Call(s.Stack, left, h)
+			left, err = fn.F().Call(s.Stack, left, h)
 			s.assert(err == nil || s.panic("reduce: error at element #%d: %v", i, err))
 			i++
 			return true
@@ -460,7 +467,7 @@ func init() {
 		fn, right, rl := s.InType('f'), s.In(), s.InType(LIST).L().ProSlice()
 		var err error
 		for i := len(rl) - 1; i >= 0; i-- {
-			right, err = fn.K().Call(s.Stack, right, rl[i])
+			right, err = fn.F().Call(s.Stack, right, rl[i])
 			s.assert(err == nil || s.panic("reduce-right: error at element #%d: %v", i, err))
 		}
 		s.Out = right
@@ -635,7 +642,7 @@ func init() {
 				switch e.Kind {
 				case token.INT:
 					v, _ := strconv.ParseInt(e.Value, 10, 64)
-					return N(float64(v))
+					return I(int64(v))
 				case token.FLOAT:
 					v, _ := strconv.ParseFloat(e.Value, 64)
 					return N(v)
@@ -658,7 +665,9 @@ func init() {
 		}
 		s.Out = do(expr)
 	}))
-	//
+
+	Default.Store("i64", NewFunc(1, func(s *State) { s.Out = s.In() }))
+	Default.Store("u64", NewFunc(1, func(s *State) { *(*interface{})(unsafe.Pointer(&s.Out)) = uint64(s.InType(NUM).I()) }))
 	// 	// SRFI-9
 	// 	type record struct {
 	// 		name   string
@@ -842,8 +851,8 @@ func ev2(v interface{}, err error) Value {
 }
 
 func (v Value) Add(v2 Value) Value {
-	vf, vi, vIsInt := v.NumberBestGuess()
-	v2f, v2i, v2IsInt := v2.NumberBestGuess()
+	vf, vi, vIsInt := v.N()
+	v2f, v2i, v2IsInt := v2.N()
 	if vIsInt && v2IsInt {
 		return I(vi + v2i)
 	}
@@ -851,8 +860,8 @@ func (v Value) Add(v2 Value) Value {
 }
 
 func (v Value) Sub(v2 Value) Value {
-	vf, vi, vIsInt := v.NumberBestGuess()
-	v2f, v2i, v2IsInt := v2.NumberBestGuess()
+	vf, vi, vIsInt := v.N()
+	v2f, v2i, v2IsInt := v2.N()
 	if vIsInt && v2IsInt {
 		return I(vi - v2i)
 	}
@@ -860,8 +869,8 @@ func (v Value) Sub(v2 Value) Value {
 }
 
 func (v Value) Mul(v2 Value) Value {
-	vf, vi, vIsInt := v.NumberBestGuess()
-	v2f, v2i, v2IsInt := v2.NumberBestGuess()
+	vf, vi, vIsInt := v.N()
+	v2f, v2i, v2IsInt := v2.N()
 	if vIsInt && v2IsInt {
 		return I(vi * v2i)
 	}
@@ -869,8 +878,8 @@ func (v Value) Mul(v2 Value) Value {
 }
 
 func (v Value) Div(v2 Value) Value {
-	vf, vi, vIsInt := v.NumberBestGuess()
-	v2f, v2i, v2IsInt := v2.NumberBestGuess()
+	vf, vi, vIsInt := v.N()
+	v2f, v2i, v2IsInt := v2.N()
 	if vIsInt && v2IsInt {
 		return I(vi / v2i)
 	}
@@ -878,8 +887,8 @@ func (v Value) Div(v2 Value) Value {
 }
 
 func (v Value) Less(v2 Value, equal bool) bool {
-	vf, vi, vIsInt := v.NumberBestGuess()
-	v2f, v2i, v2IsInt := v2.NumberBestGuess()
+	vf, vi, vIsInt := v.N()
+	v2f, v2i, v2IsInt := v2.N()
 	if vIsInt && v2IsInt {
 		return vi < v2i || (equal && vi == v2i)
 	}

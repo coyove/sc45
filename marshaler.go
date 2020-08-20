@@ -41,8 +41,8 @@ func (v Value) Marshal() (buf []byte, err error) {
 	}()
 	p := &bytes.Buffer{}
 	if v.Type() == 'l' && !v.L()._empty && v.L().Next() == Empty {
-		if v2 := v.L().Val(); v2.Type() == 'f' && v2.K().funToplevel {
-			v = v2.K().nat
+		if v2 := v.L().Val(); v2.Type() == 'f' && v2.F().funToplevel {
+			v = v2.F().nat
 		}
 	}
 	v.marshal(p)
@@ -73,7 +73,7 @@ func (v Value) marshal(p *bytes.Buffer) {
 
 	switch v.Type() {
 	case 'n':
-		vf, vi, vIsInt := v.NumberBestGuess()
+		vf, vi, vIsInt := v.N()
 		if vIsInt {
 			p.WriteByte('N')
 			var tmp [10]byte
