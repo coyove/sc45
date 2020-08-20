@@ -1,3 +1,16 @@
+(letrec ((i64start 6862298800095086341)
+      (foo (lambda (v n l) (if (< n 1) v
+                           (assert (= v (car l))) (foo (+ v 1) (- n 1) (cdr l) )))))
+  (assert (=
+            (foo i64start 4 '(6862298800095086341 6862298800095086342 6862298800095086343 6862298800095086344))
+            6862298800095086345))
+  (display (+ 1.2 6862298800095086345))
+  )
+
+(assert (= 0x3fffffffffffff (+ 0x3ffffffffffffe 1)))
+(assert (= 36028797018963964 (* 0x3ffffffffffffe 2)))
+(assert (< 0x7ffffffffffffe 0x7fffffffffffff))
+
 (assert (= 2 (pcall (lambda (e) (+ e 1)) (lambda () (assert (= 1 1)) (raise 1) (* 3 4)))))
 (assert (<= 1 2 2 4))
 (assert (>= 10 2 2 1))
@@ -27,7 +40,7 @@
 
 (assert (= (vector-nth "abc" 2) 99))
 
-(let ((a (i64 9223372036854775807))) (assert (= a (i64 0x7fffffffffffffff))) (assert (= "#9223372036854775807" (stringify a))))
+(let ((a 9223372036854775807)) (assert (= a 0x7fffffffffffffff)) (assert (= "9223372036854775807" (stringify a))))
 (assert (== 20 (reduce + 0 (map (lambda (a) ($ a * 2)) '(1 2 3 4)))))
 
 	(define makecps (lambda (f)

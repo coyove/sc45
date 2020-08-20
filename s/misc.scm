@@ -30,7 +30,7 @@
 (assert flag)
 
 (let ()
-  (define list (make/bytes (i64 10)))
+  (define list (make/bytes 10))
   (vector-set-nth! list 0 10)
   (assert (== 10 (vector-nth list 0)))
   (define s (test/struct-gen true))

@@ -22,6 +22,7 @@ var (
 	Void, Quote   = Value{}, Y("quote", 0)
 	Empty         = &Pair{_empty: true}
 	Types         = map[ValueType]string{STR: "string", SYM: "symbol", NUM: "number", LIST: "list", ANY: "any", FUNC: "function", VOID: "void", BOOL: "boolean"}
+	int64Marker   = unsafe.Pointer(new(int64))
 )
 
 const STR, SYM, NUM, BOOL, LIST, ANY, FUNC, VOID ValueType = 's', 'y', 'n', 'b', 'l', 'i', 'f', 'v'
@@ -71,6 +72,10 @@ type (
 	Stack struct {
 		nextLoc string
 		Frames  []frame
+	}
+	ListBuilder struct {
+		Len                 int
+		head, last, Current *Pair
 	}
 	execState struct {
 		assertable
@@ -172,8 +177,8 @@ func (ctx *Context) set(k string, v Value) {
 }
 
 func (ctx *Context) Store(k string, v Value) *Context {
-	if v.Type() == FUNC && v.F().fun != nil {
-		v.F().name = k
+	if v.Type() == FUNC && v.K().fun != nil {
+		v.K().name = k
 	}
 	if _, mv := ctx.find(k); mv == nil {
 		ctx.set(k, v)
@@ -375,7 +380,7 @@ TAIL_CALL:
 
 	fn := __exec(head, state)
 	state.assert(fn.Type() == FUNC || state.panic("invalid function: %v", head))
-	cc := fn.F()
+	cc := fn.K()
 	state.debug.nextLoc = (cc.location)
 
 	if cc.fun == nil {
@@ -391,6 +396,8 @@ TAIL_CALL:
 			values := InitListBuilder()
 			c.Next().ProRange(func(v Value) bool { values = values.Append(__exec(v, state)); return true })
 			m.set(cc.name, values.Build())
+		} else {
+			state.assert(!c.HasProNext() || state.panic("too many arguments, expect exact %d", len(cc.natArgNames)))
 		}
 		state.local, expr, tailCall = m, cc.nat, true
 		goto TAIL_CALL
@@ -410,11 +417,7 @@ func (ctx *Context) Parse(filename, text string) (v Value, err error) {
 	s := (&scanner.Scanner{}).Init(strings.NewReader(text))
 	s.Mode &^= scanner.ScanChars | scanner.ScanRawStrings
 	s.Error = func(s *scanner.Scanner, msg string) {
-		pos := s.Position
-		if !pos.IsValid() {
-			pos = s.Pos()
-		}
-		err = fmt.Errorf("parse: %s at %s:%d:%d", msg, filename, pos.Line, pos.Column)
+		err = fmt.Errorf("parse: %s at %s:%d:%d", msg, filename, s.Pos().Line, s.Pos().Column)
 	}
 
 	if v = func() Value {
@@ -542,10 +545,9 @@ LOOP:
 			ctx.assert(c != Void || ctx.panic("invalid quote syntax"))
 			comp = comp.Append(L(Empty, Y(ifstr(tok == '\'', "quote", "quasiquote"), 0), c))
 		case ',':
-			sp := false
-			if s.Peek() == '@' {
+			sp := s.Peek() == '@'
+			if sp {
 				s.Scan()
-				sp = true
 			}
 			c := ctx.scan(s, true)
 			ctx.assert(c != Void || ctx.panic("invalid unquote syntax"))
@@ -553,9 +555,9 @@ LOOP:
 		default:
 			text := s.TokenText() + scanToDelim(s)
 			if v, ok := strconv.ParseInt(text, 0, 64); ok == nil || tok == scanner.Int {
-				comp = comp.Append(N(float64(v)).WithString(text))
+				comp = comp.Append(I(v))
 			} else if v, ok := strconv.ParseFloat(text, 64); ok == nil || tok == scanner.Float {
-				comp = comp.Append(N(v).WithString(text))
+				comp = comp.Append(N(v))
 			} else {
 				comp = comp.Append(Y(text, uint32(s.Pos().Line)))
 			}
@@ -585,7 +587,7 @@ func (ctx *Context) unwrapMacro(v Value, quasi bool, stack *Stack) Value {
 			if quasi {
 				return v
 			}
-			if m, _ := ctx.Load(head.S()); m.Type() == FUNC && m.F().macro {
+			if m, _ := ctx.Load(head.S()); m.Type() == FUNC && m.K().macro {
 				args := InitListBuilder().Append(head)
 				for comp.MoveProNext(&comp); !comp.ProEmpty(); comp.MoveProNext(&comp) {
 					args = args.Append(ctx.unwrapMacro(comp.Val(), false, stack).Quote())
@@ -596,10 +598,7 @@ func (ctx *Context) unwrapMacro(v Value, quasi bool, stack *Stack) Value {
 		}
 	}
 	old := comp
-	for ; comp != nil; comp = comp.Next() {
-		if comp.Empty() {
-			break
-		}
+	for ; comp != nil && !comp.Empty(); comp = comp.Next() {
 		comp.setVal(ctx.unwrapMacro(comp.Val(), quasi, stack))
 	}
 	return L(old)
@@ -640,7 +639,7 @@ func panicif(v bool, t string) {
 	}
 }
 
-// V creates Value from interface{}. uint64 and int64 will be stored as they were because float64 can't handle them correctly
+// V creates Value from interface{}
 func V(v interface{}) Value {
 	if v, ok := v.(Value); ok {
 		return v
@@ -650,10 +649,10 @@ func V(v interface{}) Value {
 		return V(rv.Elem())
 	case reflect.Invalid:
 		return Void
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
-		return N(float64(rv.Int()))
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:
-		return N(float64(rv.Uint()))
+	case reflect.Int64, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
+		return I(rv.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return I(int64(rv.Uint()))
 	case reflect.Float32, reflect.Float64:
 		return N(rv.Float())
 	case reflect.String:
@@ -678,11 +677,20 @@ func L(lst *Pair, l ...Value) Value {
 	}
 	return Value{val: uint64(LIST), ptr: unsafe.Pointer(lst)}
 }
+
+// Float64 available range in uint64: 0x0 - 0x7FF00000`00000001, 0x80000000`00000000 - 0xFFF00000`00000000
+// When bit-inverted, the range is: 0x800FFFFF`FFFFFFFE - 0xFFFFFFFF`FFFFFFFF, 0x000FFFFF`FFFFFFFF - 0x7FFFFFFF`FFFFFFFF
 func N(v float64) Value {
 	if math.IsNaN(v) {
 		return Value{val: 0x800FFFFFFFFFFFFE} // ^7FF0000000000001
 	}
 	return Value{val: ^math.Float64bits(v)}
+}
+func I(v int64) Value {
+	if int64(float64(v)) == v {
+		return N(float64(v))
+	}
+	return Value{val: uint64(v), ptr: int64Marker}
 }
 func Y(v string, ln uint32) Value { return Value{ptr: unsafe.Pointer(&v), val: 1<<51 | uint64(ln)} }
 func S(v string) (vs Value)       { return Value{val: uint64(STR), ptr: unsafe.Pointer(&v)} }
@@ -714,7 +722,11 @@ func (v Value) Type() ValueType {
 func (v Value) stringify(goStyle bool) string {
 	switch v.Type() {
 	case NUM:
-		return strconv.FormatFloat(v.N(), 'f', -1, 64)
+		vf, vi, vIsInt := v.NumberBestGuess()
+		if vIsInt {
+			return strconv.FormatInt(vi, 10)
+		}
+		return strconv.FormatFloat(vf, 'f', -1, 64)
 	case STR:
 		return strconv.Quote(v.S())
 	case SYM:
@@ -733,7 +745,7 @@ func (v Value) stringify(goStyle bool) string {
 	case ANY:
 		return "#" + fmt.Sprint(v.A())
 	case FUNC:
-		return v.F().String()
+		return v.K().String()
 	default:
 		return ifstr(goStyle, "nil", "#v")
 	}
@@ -741,7 +753,11 @@ func (v Value) stringify(goStyle bool) string {
 func (v Value) V() interface{} {
 	switch v.Type() {
 	case NUM:
-		return v.N()
+		vf, vi, vIsInt := v.NumberBestGuess()
+		if vIsInt {
+			return vi
+		}
+		return vf
 	case STR, SYM:
 		return v.S()
 	case LIST:
@@ -753,7 +769,7 @@ func (v Value) V() interface{} {
 	case ANY:
 		return v.A()
 	case FUNC:
-		return v.F()
+		return v.K()
 	default:
 		return nil
 	}
@@ -764,7 +780,13 @@ func (v Value) Equals(v2 Value) bool {
 	} else if vflag, v2flag := v.Type(), v2.Type(); vflag == v2flag {
 		switch vflag {
 		case NUM:
-			return v.val == v2.val
+			if v.ptr == nil && v2.ptr == nil {
+				return v.val == v2.val
+			}
+			if v.ptr != nil && v2.ptr != nil {
+				return *(*int64)(v.ptr) == *(*int64)(v2.ptr)
+			}
+			return v.N() == v2.N()
 		case SYM, STR:
 			return v.S() == v2.S()
 		case ANY:
@@ -781,21 +803,39 @@ func (v Value) findSym(depth int) (string, uint32) {
 	}
 	return "", 0
 }
-func (v Value) F() *Func                  { return (*Func)(v.ptr) }
-func (v Value) B() bool                   { return v.val == 2 }
-func (v Value) N() float64                { return math.Float64frombits(^v.val) }
-func (v Value) S() string                 { return *(*string)(v.ptr) }
-func (v Value) L() *Pair                  { return (*Pair)(v.ptr) }
-func (v Value) A() interface{}            { return *(*interface{})(unsafe.Pointer(&v)) }
-func (v Value) Y(text string) Value       { return Y(text, uint32(v.Type()/SYM)*v.LineInfo()) }
-func (v Value) LineInfo() uint32          { return uint32(v.val) }
-func (v Value) String() string            { return v.stringify(false) }
-func (v Value) GoString() string          { return fmt.Sprintf("{val:%016x ptr:%016x}", v.val, v.ptr) }
-func (v Value) IsFalse() bool             { return v.val < 2 } // 0: void, 1: false
-func (v Value) WithString(o string) Value { v.ptr = unsafe.Pointer(&o); return v }
+func (v Value) K() *Func            { return (*Func)(v.ptr) }
+func (v Value) B() bool             { return v.val == 2 }
+func (v Value) S() string           { return *(*string)(v.ptr) }
+func (v Value) L() *Pair            { return (*Pair)(v.ptr) }
+func (v Value) A() interface{}      { return *(*interface{})(unsafe.Pointer(&v)) }
+func (v Value) Y(text string) Value { return Y(text, uint32(v.Type()/SYM)*v.LineInfo()) }
+func (v Value) LineInfo() uint32    { return uint32(v.val) }
+func (v Value) String() string      { return v.stringify(false) }
+func (v Value) GoString() string    { return fmt.Sprintf("{val:%016x ptr:%016x}", v.val, v.ptr) }
+func (v Value) IsFalse() bool       { return v.val < 2 } // 0: void, 1: false
+func (v Value) NumberBestGuess() (vf float64, vi int64, vIsInt bool) {
+	if v.ptr == int64Marker {
+		return float64(int64(v.val)), int64(v.val), true
+	}
+	f := math.Float64frombits(^v.val)
+	return f, int64(f), float64(int64(f)) == f
+}
+func (v Value) N() float64 {
+	if v.ptr == int64Marker {
+		return float64(int64(v.val))
+	}
+	return math.Float64frombits(^v.val)
+}
+func (v Value) I() int64 {
+	if v.ptr == int64Marker {
+		return int64(v.val)
+	}
+	return int64(math.Float64frombits(^v.val))
+}
 
 func pval(v Value) *Pair               { return (&Pair{}).setVal(v) }
 func (p *Pair) Val() Value             { return p.val }
+func (p *Pair) Car() Value             { panicif(p.Empty(), "car: empty list"); return p.Val() }
 func (p *Pair) SetCar(v Value) *Pair   { p.val = v; return p }
 func (p *Pair) Next() *Pair            { return p.next }
 func (p *Pair) setVal(v Value) *Pair   { p.val = v; return p }
@@ -951,10 +991,6 @@ func (p *Pair) IsProperList() bool {
 		}
 	}
 }
-func (p *Pair) Car() Value {
-	panicif(p.Empty(), "car: empty list")
-	return p.Val()
-}
 func (p *Pair) Cdr() Value {
 	p = p.Next()
 	panicif(p == nil, "cdr: empty list")
@@ -973,12 +1009,6 @@ func (p *Pair) SetCdr(v Value) *Pair {
 	return p
 }
 func Cons(v, v2 Value) *Pair { return pval(v).SetCdr(v2) }
-
-type ListBuilder struct {
-	Len                 int
-	head, last, Current *Pair
-}
-
 func InitListBuilder() ListBuilder {
 	b := ListBuilder{Current: &Pair{_empty: true}}
 	b.head = b.Current

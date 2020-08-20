@@ -41,8 +41,8 @@ func (v Value) Marshal() (buf []byte, err error) {
 	}()
 	p := &bytes.Buffer{}
 	if v.Type() == 'l' && !v.L()._empty && v.L().Next() == Empty {
-		if v2 := v.L().Val(); v2.Type() == 'f' && v2.F().funToplevel {
-			v = v2.F().nat
+		if v2 := v.L().Val(); v2.Type() == 'f' && v2.K().funToplevel {
+			v = v2.K().nat
 		}
 	}
 	v.marshal(p)
@@ -73,14 +73,15 @@ func (v Value) marshal(p *bytes.Buffer) {
 
 	switch v.Type() {
 	case 'n':
-		if v := v.N(); float64(int64(v)) == v {
+		vf, vi, vIsInt := v.NumberBestGuess()
+		if vIsInt {
 			p.WriteByte('N')
 			var tmp [10]byte
-			n := binary.PutVarint(tmp[:], int64(v))
+			n := binary.PutVarint(tmp[:], vi)
 			p.Write(tmp[:n])
 		} else {
 			p.WriteByte('n')
-			binary.Write(p, binary.BigEndian, v)
+			binary.Write(p, binary.BigEndian, vf)
 		}
 	case 'y':
 		p.WriteByte('y')
@@ -140,7 +141,7 @@ func (v *Value) unmarshal(p interface {
 	case 'N':
 		v2, err := binary.ReadVarint(p)
 		panicerr(err)
-		*v = N(float64(v2))
+		*v = I(v2)
 	case 'y':
 		line, err := binary.ReadVarint(p)
 		panicerr(err)

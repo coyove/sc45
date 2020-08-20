@@ -9,7 +9,6 @@ import (
 	"go/token"
 	"io"
 	"io/ioutil"
-	"math/big"
 	"os"
 	"reflect"
 	"strconv"
@@ -125,13 +124,13 @@ func init() {
 	})).Store("<>", Default.m["!="]).Store("<", NewFunc(1|Vararg, func(s *State) {
 		flag := true
 		for s.InType('n'); flag && !s.Args.ProEmpty(); {
-			flag = s.LastIn().N() < s.InType('n').N()
+			flag = s.LastIn().Less(s.InType('n'), false)
 		}
 		s.Out = B(flag)
 	})).Store("<=", NewFunc(1|Vararg, func(s *State) {
 		flag := true
 		for s.InType('n'); flag && !s.Args.ProEmpty(); {
-			flag = s.LastIn().N() <= s.InType('n').N()
+			flag = s.LastIn().Less(s.InType('n'), true)
 		}
 		s.Out = B(flag)
 	})).Store(">", NewFunc(1|Vararg|Macro, func(s *State) {
@@ -143,11 +142,9 @@ func init() {
 	})).Store("+", NewFunc(1|Vararg, func(s *State) {
 		switch s.Out = s.In(); s.Out.Type() {
 		case 'n':
-			vn := s.Out.N()
 			for !s.Args.ProEmpty() {
-				vn += s.InType('n').N()
+				s.Out = s.Out.Add(s.InType('n'))
 			}
-			s.Out = N(vn)
 		case 's':
 			vs := s.Out.S()
 			for !s.Args.ProEmpty() {
@@ -158,26 +155,30 @@ func init() {
 			panic(fmt.Errorf("can't apply 'add' on %v", s.Out))
 		}
 	})).Store("-", NewFunc(1|Vararg, func(s *State) {
-		a := s.InType('n').N()
+		a := s.InType('n')
 		if s.Args.ProEmpty() {
-			a = -a
+			af, ai, aIsInt := a.NumberBestGuess()
+			if aIsInt {
+				s.Out = I(-ai)
+			} else {
+				s.Out = N(-af)
+			}
+			return
 		}
 		for !s.Args.ProEmpty() {
-			a -= s.InType('n').N()
+			a = a.Sub(s.InType('n'))
 		}
-		s.Out = N(a)
+		s.Out = a
 	})).Store("*", NewFunc(1|Vararg, func(s *State) {
-		a := s.InType('n').N()
+		s.Out = s.InType('n')
 		for !s.Args.ProEmpty() {
-			a *= s.InType('n').N()
+			s.Out = s.Out.Mul(s.InType('n'))
 		}
-		s.Out = N(a)
 	})).Store("/", NewFunc(1|Vararg, func(s *State) {
-		a := s.InType('n').N()
+		s.Out = s.InType('n')
 		for !s.Args.ProEmpty() {
-			a /= s.InType('n').N()
+			s.Out = s.Out.Div(s.InType('n'))
 		}
-		s.Out = N(a)
 	})).Store("let", NewFunc(1|Vararg|Macro, func(s *State) {
 		var names, values []Value
 		s.InType(LIST).L().ProRange(func(pair Value) bool {
@@ -236,7 +237,7 @@ func init() {
 				if rc.Type() != FUNC {
 					s.Out = V(r)
 				} else {
-					s.Out = ev2(rc.F().Call(s.Stack, V(r)))
+					s.Out = ev2(rc.K().Call(s.Stack, V(r)))
 				}
 				s.Stack.Frames = old
 			}
@@ -305,15 +306,6 @@ func init() {
 	}))
 	Default.Store("define-modules", NewFunc(1|Vararg, func(s *State) {
 	}))
-
-	RegisterGoType(int64(0))
-	Default.Store("i64", NewFunc(1|Macro, func(s *State) { v, _ := strconv.ParseInt(trystr(s), 0, 64); s.Out = V(v) }))
-
-	RegisterGoType(uint64(0))
-	Default.Store("u64", NewFunc(1|Macro, func(s *State) { v, _ := strconv.ParseUint(trystr(s), 0, 64); s.Out = V(v) }))
-
-	RegisterGoType(&big.Int{})
-	Default.Store("bigint", NewFunc(1|Macro, func(s *State) { i := &big.Int{}; i.UnmarshalText([]byte(trystr(s))); s.Out = V(i) }))
 
 	Default.Store("go->value", NewFunc(1, func(s *State) {
 		rv := reflect.ValueOf(s.In().V())
@@ -405,23 +397,23 @@ func init() {
 	// 		body = Append(body, s.Args[1:]...)
 	// 		s.Out = L(body...)
 	// 	})
-	Default.Store("vector-bytes", NewFunc(1, func(s *State) { s.Out = V(make([]byte, int(s.InType('n').N()))) }))
-	Default.Store("vector-strings", NewFunc(1, func(s *State) { s.Out = V(make([]string, int(s.InType('n').N()))) }))
-	Default.Store("vector-ints", NewFunc(1, func(s *State) { s.Out = V(make([]int, int(s.InType('n').N()))) }))
-	Default.Store("vector-int64s", NewFunc(1, func(s *State) { s.Out = V(make([]int64, int(s.InType('n').N()))) }))
+	Default.Store("vector-bytes", NewFunc(1, func(s *State) { s.Out = V(make([]byte, s.InType('n').I())) }))
+	Default.Store("vector-strings", NewFunc(1, func(s *State) { s.Out = V(make([]string, s.InType('n').I())) }))
+	Default.Store("vector-ints", NewFunc(1, func(s *State) { s.Out = V(make([]int, s.InType('n').I())) }))
+	Default.Store("vector-int64s", NewFunc(1, func(s *State) { s.Out = V(make([]int64, s.InType('n').I())) }))
 	Default.Store("vector-len", NewFunc(1, func(s *State) { s.Out = N(float64((reflect.ValueOf(s.In().V()).Len()))) }))
 	Default.Store("vector-null?", NewFunc(1, func(s *State) { s.Out = B(reflect.ValueOf(s.In().V()).Len() == 0) }))
 	Default.Store("vector-nth", NewFunc(2, func(s *State) {
 		rm := reflect.ValueOf(s.In().V())
-		s.Out = V(rm.Index(int(s.InType('n').N())).Interface())
+		s.Out = V(rm.Index(int(s.InType('n').I())).Interface())
 	}))
 	Default.Store("vector-set-nth!", NewFunc(3, func(s *State) {
 		rm := reflect.ValueOf(s.In().V())
-		rm.Index(int(s.InType('n').N())).Set(s.In().TypedVal(rm.Type().Elem()))
+		rm.Index(int(s.InType('n').I())).Set(s.In().TypedVal(rm.Type().Elem()))
 	}))
 	Default.Store("vector-slice", NewFunc(3, func(s *State) {
 		rl := reflect.ValueOf(s.In().V())
-		start, end := int(s.InType('n').N()), int(s.InType('n').N())
+		start, end := int(s.InType('n').I()), int(s.InType('n').I())
 		s.Out = V(rl.Slice(start, end).Interface())
 	}))
 	Default.Store("vector-concat", NewFunc(2, func(s *State) {
@@ -435,7 +427,7 @@ func init() {
 	Default.Store("vector-foreach", NewFunc(2, func(s *State) {
 		rl, fn := reflect.ValueOf(s.In().V()), s.InType('f')
 		for i := 0; i < rl.Len(); i++ {
-			flag, err := fn.F().Call(s.Stack, N(float64(i)), V(rl.Index(i).Interface()))
+			flag, err := fn.K().Call(s.Stack, N(float64(i)), V(rl.Index(i).Interface()))
 			s.assert(err == nil || s.panic("invalid callback "))
 			if flag.IsFalse() {
 				break
@@ -445,7 +437,7 @@ func init() {
 	Default.Store("map", NewFunc(2, func(s *State) {
 		fn, r, l, i := s.InType('f'), []Value{}, s.InType(LIST).L(), 0
 		l.ProRange(func(h Value) bool {
-			v, err := fn.F().Call(s.Stack, h)
+			v, err := fn.K().Call(s.Stack, h)
 			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
 			r = append(r, v)
 			i++
@@ -457,7 +449,7 @@ func init() {
 		fn, left, l, i := s.InType('f'), s.In(), s.InType(LIST).L(), 0
 		var err error
 		l.ProRange(func(h Value) bool {
-			left, err = fn.F().Call(s.Stack, left, h)
+			left, err = fn.K().Call(s.Stack, left, h)
 			s.assert(err == nil || s.panic("reduce: error at element #%d: %v", i, err))
 			i++
 			return true
@@ -468,7 +460,7 @@ func init() {
 		fn, right, rl := s.InType('f'), s.In(), s.InType(LIST).L().ProSlice()
 		var err error
 		for i := len(rl) - 1; i >= 0; i-- {
-			right, err = fn.F().Call(s.Stack, right, rl[i])
+			right, err = fn.K().Call(s.Stack, right, rl[i])
 			s.assert(err == nil || s.panic("reduce-right: error at element #%d: %v", i, err))
 		}
 		s.Out = right
@@ -842,21 +834,54 @@ func vlisttointerface(l []Value) []interface{} {
 	return a
 }
 
-func trystr(s *State) string {
-	switch s.In().Type() {
-	case 's', SYM:
-		return s.LastIn().S()
-	case 'n':
-		if s.LastIn().ptr != nil {
-			return s.LastIn().S()
-		}
-	}
-	return ""
-}
-
 func ev2(v interface{}, err error) Value {
 	if err != nil {
 		return V(err)
 	}
 	return V(v)
+}
+
+func (v Value) Add(v2 Value) Value {
+	vf, vi, vIsInt := v.NumberBestGuess()
+	v2f, v2i, v2IsInt := v2.NumberBestGuess()
+	if vIsInt && v2IsInt {
+		return I(vi + v2i)
+	}
+	return N(vf + v2f)
+}
+
+func (v Value) Sub(v2 Value) Value {
+	vf, vi, vIsInt := v.NumberBestGuess()
+	v2f, v2i, v2IsInt := v2.NumberBestGuess()
+	if vIsInt && v2IsInt {
+		return I(vi - v2i)
+	}
+	return N(vf - v2f)
+}
+
+func (v Value) Mul(v2 Value) Value {
+	vf, vi, vIsInt := v.NumberBestGuess()
+	v2f, v2i, v2IsInt := v2.NumberBestGuess()
+	if vIsInt && v2IsInt {
+		return I(vi * v2i)
+	}
+	return N(vf * v2f)
+}
+
+func (v Value) Div(v2 Value) Value {
+	vf, vi, vIsInt := v.NumberBestGuess()
+	v2f, v2i, v2IsInt := v2.NumberBestGuess()
+	if vIsInt && v2IsInt {
+		return I(vi / v2i)
+	}
+	return N(vf / v2f)
+}
+
+func (v Value) Less(v2 Value, equal bool) bool {
+	vf, vi, vIsInt := v.NumberBestGuess()
+	v2f, v2i, v2IsInt := v2.NumberBestGuess()
+	if vIsInt && v2IsInt {
+		return vi < v2i || (equal && vi == v2i)
+	}
+	return vf < v2f || (equal && vf == v2f)
 }

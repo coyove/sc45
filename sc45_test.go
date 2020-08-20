@@ -3,6 +3,7 @@ package sc45
 import (
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -54,13 +55,26 @@ func TestMarshal(t *testing.T) {
 	if d := v.V().([]interface{})[3].(dummy); d.V.V3 != 10 {
 		t.Fatal(d)
 	}
-	v, _ = it.Parse("", "(i64 10)")
+	v, _ = it.Parse("", "0x7fffffffffffffff")
 	buf, err = v.Marshal()
 	panicerr(err)
 	panicerr(v.Unmarshal(buf))
-	if d := v.V().([]interface{})[3].(int64); d != 10 {
+	if d := v.V().([]interface{})[3].(int64); d != 0x7fffffffffffffff {
 		t.Fatal(d)
 	}
+}
+
+func TestNumber(t *testing.T) {
+	check := func(n Value, v float64) {
+		if n.Type() != NUM || n.N() != v {
+			t.Fatal(n.GoString(), v)
+		}
+	}
+	check(N(0), 0)
+	check(N(math.Inf(1)), math.Inf(1))
+	check(N(math.Inf(-1)), math.Inf(-1))
+	check(N(math.MaxFloat64), math.MaxFloat64)
+	check(N(-math.MaxFloat64), -math.MaxFloat64)
 }
 
 func TestOne(t *testing.T) {
@@ -123,7 +137,7 @@ func TestOne(t *testing.T) {
 		m := s.InMap()
 		f := s.InType('f')
 		for k, v := range m {
-			err, _ := f.F().Call(s.Stack, S(k), v)
+			err, _ := f.K().Call(s.Stack, S(k), v)
 			if err.IsFalse() {
 				s.Out = v
 				return
@@ -154,11 +168,6 @@ func TestOne(t *testing.T) {
 
 	{
 		_, err := it.Run(`(define foo (eval (parse "s/module.scm"))) 
-((lambda ()
-	((lambda (a) (assert #f) 10) 0)
-	12
-	))
-
 (define m# (lambda-syntax whatever (foo 10)))
 (m#)
 		`)
@@ -167,7 +176,6 @@ func TestOne(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-
 }
 
 func BenchmarkRun(b *testing.B) {
