@@ -35,13 +35,26 @@
 
 (define for (lambda-syntax args
                             (match args ()
+                                   [v start end #:step step body*]
+                                   `(letrec ((foo (lambda (current end step)
+                                                    (if ([if (<= step 0) >= <=] current end)
+                                                      (begin
+                                                        (define ,v current)
+                                                        ,@body
+                                                        (foo (+ current step) end step))))))
+                                      (foo ,start ,end ,step))
                                    [v start end body*]
-                                   `(letrec ((foo (lambda (current)
-                                                    (if (< current ,end)
+                                   `(letrec ((foo (lambda (current end)
+                                                    (if (<= current end)
                                                       (begin
                                                         (define ,v current)
                                                         ,@body
                                                         (set! current (+ current 1))
-                                                        (foo current))))))
-                                      (foo ,start)))))
-(for a 0 10 (display a))
+                                                        (foo current end))))))
+                                      (foo ,start ,end)))))
+(let ((text ""))
+  (for i 0 9
+       (for j 9 i #:step -1
+            (set! text (+ text (number->string i) "-" (number->string j) " ")))
+       (set! text (+ text "\n")))
+  (display text)

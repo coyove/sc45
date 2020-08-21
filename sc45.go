@@ -20,12 +20,12 @@ var (
 	Default       = &Context{}
 	Vararg, Macro = 1 << 30, 1 << 29
 	Void, Quote   = Value{}, Y("quote", 0)
-	Empty         = &Pair{_empty: true}
-	Types         = map[ValueType]string{STR: "string", SYM: "symbol", NUM: "number", LIST: "list", ANY: "any", FUNC: "function", VOID: "void", BOOL: "boolean"}
+	Empty         = &Pair{empty: true}
+	Types         = map[ValueType]string{STR: "string", SYM: "symbol", NUM: "number", LIST: "list", INTF: "interface", FUNC: "function", VOID: "void", BOOL: "boolean"}
 	int64Marker   = unsafe.Pointer(new(int64))
 )
 
-const STR, SYM, NUM, BOOL, LIST, ANY, FUNC, VOID ValueType = 's', 'y', 'n', 'b', 'l', 'i', 'f', 'v'
+const STR, SYM, NUM, BOOL, LIST, INTF, FUNC, VOID, ANY ValueType = 's', 'y', 'n', 'b', 'l', 'i', 'f', 'v', 'a'
 const toplevelName = "(toplevel)"
 
 type (
@@ -35,35 +35,32 @@ type (
 		ptr unsafe.Pointer
 	}
 	Pair struct {
-		next   *Pair
-		val    Value
-		_empty bool
+		next  *Pair
+		val   Value
+		empty bool
 	}
 	Func struct {
-		location     string       // filename inherited from the toplevel builtin
-		name         string       // native: variadic argument name, builtin: last assigned name
-		macro        bool         // is macro
-		variadic     bool         // variadic function
-		funToplevel  bool         // builtin: toplevel
-		funMinArgNum int          // builtin: minimal arguments required
-		fun          func(*State) // builtin
+		source, name string       // filename inherited from the toplevel lambda, name => native: variadic argument name, builtin: last assigned name
+		macro, vari  bool         // is macro/variadic function
+		natToplevel  bool         // native: toplevel
 		natArgNames  []string     // native: arguments binding list
 		natCls       *Context     // native: closure
 		nat          Value        // native
+		funMinArgNum int          // builtin: minimal arguments required
+		fun          func(*State) // builtin
 	}
 	State struct {
 		*Context
 		assertable
-		argIdx      int
-		argLast     Value
-		Args        *Pair
-		Out, Caller Value
-		Stack       *Stack
+		argIdx              int
+		Args                *Pair
+		LastIn, Out, Caller Value
+		Stack               *Stack
 	}
 	Context struct {
 		assertable
 		parent *Context
-		m      map[string]Value
+		M      map[string]Value
 	}
 	frame struct {
 		K   Value
@@ -74,8 +71,8 @@ type (
 		Frames  []frame
 	}
 	ListBuilder struct {
-		Len                 int
-		head, last, Current *Pair
+		Len             int
+		head, last, Cur *Pair
 	}
 	execState struct {
 		assertable
@@ -89,7 +86,7 @@ type (
 func New() *Context { return Default.Copy() }
 
 func NewFunc(minArgsFlag int, f func(*State)) Value {
-	return F(&Func{fun: f, funMinArgNum: minArgsFlag & 0xffff, variadic: minArgsFlag&Vararg != 0, macro: minArgsFlag&Macro != 0, location: "(builtin)"})
+	return F(&Func{fun: f, funMinArgNum: minArgsFlag & 0xffff, vari: minArgsFlag&Vararg != 0, macro: minArgsFlag&Macro != 0, source: "(builtin)"})
 }
 
 func (s *Stack) popAndReturn(v Value) Value {
@@ -137,45 +134,42 @@ func (f *Func) Call(dbg *Stack, a ...Value) (result Value, err error) {
 
 func (f *Func) String() string {
 	if f.nat == Void {
-		return ifstr(f.name == "#v", "#|missing native code|#", f.name+" #|native code|#")
+		return ifstr(f.name == "", "#|missing native code|#", f.name+" #|native code|#")
+	} else if f.vari && len(f.natArgNames) == 0 {
+		return ifstr(f.macro, "(lambda-syntax ", "(lambda ") + f.name + " " + f.nat.String() + ")"
 	}
-	return ifstr(f.macro, "(lambda-syntax (", "(lambda (") + strings.Join(f.natArgNames, " ") + ifstr(f.variadic, " . "+f.name, "") + ") " +
-		f.nat.String() + ")" + ifstr(f.funToplevel, " #|toplevel|#", "")
+	return ifstr(f.macro, "(lambda-syntax (", "(lambda (") + strings.Join(f.natArgNames, " ") + ifstr(f.vari, " . "+f.name, "") + ") " + f.nat.String() + ")"
 }
 
-// In pops an argument
-func (s *State) In() Value {
+// PopArg pops an argument
+func (s *State) PopArg() Value {
 	s.assert(!s.Args.ProEmpty() || s.panic("too few arguments, expect at least %d", s.argIdx+1))
 	v := s.Args.Val()
-	s.argIdx, s.argLast = s.argIdx+1, v
+	s.argIdx, s.LastIn = s.argIdx+1, v
 	s.Args = s.Args.Next()
 	return v
 }
 
-func (s *State) InType(t ValueType) Value {
-	v := s.In()
-	s.assert(t == 0 || v.Type() == t || s.panic("invalid argument #%d, expect %s, got %v", s.argIdx, Types[t], v))
+func (s *State) PopArgAs(t ValueType) Value {
+	v := s.PopArg()
+	s.assert(t == ANY || v.Type() == t || s.panic("invalid argument #%d, expect %s, got %v", s.argIdx, Types[t], v))
 	return v
 }
 
-func (s *State) LastIn() Value { return s.argLast }
-
 func (ctx *Context) find(k string) (Value, *Context) {
 	for ; ctx != nil; ctx = ctx.parent {
-		if v, ok := ctx.m[k]; ok {
+		if v, ok := ctx.M[k]; ok {
 			return v, ctx
 		}
 	}
 	return Void, nil
 }
-
 func (ctx *Context) set(k string, v Value) {
-	if ctx.m == nil {
-		ctx.m = make(map[string]Value, 4)
+	if ctx.M == nil {
+		ctx.M = make(map[string]Value, 4)
 	}
-	ctx.m[k] = v
+	ctx.M[k] = v
 }
-
 func (ctx *Context) Store(k string, v Value) *Context {
 	if v.Type() == FUNC && v.F().fun != nil {
 		v.F().name = k
@@ -187,28 +181,21 @@ func (ctx *Context) Store(k string, v Value) *Context {
 	}
 	return ctx
 }
-
 func (ctx *Context) Load(k string) (Value, bool) {
 	v, mv := ctx.find(k)
 	return v, mv != nil
 }
-
 func (ctx *Context) Delete(k string) (Value, bool) {
 	v, mv := ctx.find(k)
 	if mv != nil {
-		delete(mv.m, k)
+		delete(mv.M, k)
 	}
 	return v, mv != nil
 }
-
-func (ctx *Context) Len() int { return len(ctx.m) }
-
-func (ctx *Context) Unsafe() map[string]Value { return ctx.m }
-
 func (ctx *Context) Copy() *Context {
-	m2 := &Context{m: make(map[string]Value, len(ctx.m)), parent: ctx.parent}
-	for k, v := range ctx.m {
-		m2.m[k] = v
+	m2 := &Context{M: make(map[string]Value, len(ctx.M)), parent: ctx.parent}
+	for k, v := range ctx.M {
+		m2.M[k] = v
 	}
 	return m2
 }
@@ -234,10 +221,10 @@ func __execQuasi(expr Value, state execState) (Value, *Pair) {
 		for ; !lst.ProEmpty(); lst = lst.Next() {
 			if v, p := __execQuasi(lst.Val(), state); p != nil {
 				for ; p != nil; p = p.Next() {
-					*results.Current = *p
+					*results.Cur = *p
 					if !p.Empty() && !p.Improper() {
-						results.Current.setNext(&Pair{_empty: true})
-						results.Current = results.Current.Next()
+						results.Cur.setNext(&Pair{empty: true})
+						results.Cur = results.Cur.Next()
 					}
 				}
 			} else {
@@ -253,14 +240,12 @@ func __exec(expr Value, state execState) Value {
 	tailCall := false
 TAIL_CALL:
 	switch expr.Type() {
+	case LIST: // evaluating the list
 	case SYM:
 		v, ok := state.local.Load(expr.S())
 		state.assert(ok || state.panic("unbound %v", expr))
-		if tailCall {
-			return state.debug.popAndReturn(v)
-		}
-		return v
-	case LIST: // evaluating the list
+		expr = v
+		fallthrough
 	default:
 		if tailCall {
 			return state.debug.popAndReturn(expr)
@@ -297,15 +282,15 @@ TAIL_CALL:
 			return state.debug.popAndReturn(Void)
 		case "lambda", "lambda-syntax":
 			state.assert(c.MoveProNext(&c) || state.panic("invalid lambda* syntax, missing parameters"))
-			f := &Func{natCls: state.local, macro: va != "lambda", location: state.debug.LastLocation()}
+			f := &Func{natCls: state.local, macro: va != "lambda", source: state.debug.LastLocation()}
 			switch c.Val().Type() {
 			case SYM: // (lambda* args body)
-				f.name, f.variadic = c.Val().S(), true
+				f.name, f.vari = c.Val().S(), true
 			case LIST: // (lambda* (a1 a2 ... an) body)
 				for bindings := c.Val().L(); bindings != nil; bindings = bindings.Next() {
 					if bindings.Improper() {
 						state.assert(bindings.Val().Type() == SYM || state.panic("invalid parameter, expect valid symbol"))
-						f.name, f.variadic = bindings.Val().S(), true
+						f.name, f.vari = bindings.Val().S(), true
 					} else if !bindings.Empty() {
 						state.assert(bindings.Val().Type() == SYM || state.panic("invalid parameter, expect valid symbol"))
 						f.natArgNames = append(f.natArgNames, bindings.Val().S())
@@ -336,8 +321,8 @@ TAIL_CALL:
 					symbolmap[s.S()] = struct{}{}
 				}
 			}
-			m := &Context{parent: state.local, m: map[string]Value{}}
-			if source.L().match(state, pattern, false, symbolmap, m.m) {
+			m := &Context{parent: state.local, M: map[string]Value{}}
+			if source.L().match(state, pattern, false, symbolmap, m.M) {
 				return state.debug.popAndReturn(__exec(c.Val(), execState{debug: state.debug, local: m}))
 			}
 			if c.HasProNext() {
@@ -368,7 +353,7 @@ TAIL_CALL:
 			switch c.MoveProNext(&c); c.Val().Type() {
 			case SYM:
 				x := c.Val().S()
-				state.assert(state.local.m[x] == Void || state.panic("re-define %s", x)).
+				state.assert(state.local.M[x] == Void || state.panic("re-define %s", x)).
 					assert(c.MoveProNext(&c) || state.panic("invalid define syntax, missing bound value"))
 				state.local.set(x, __exec(c.Val(), state))
 			case LIST:
@@ -387,18 +372,18 @@ TAIL_CALL:
 	fn := __exec(head, state)
 	state.assert(fn.Type() == FUNC || state.panic("invalid function: %v", head))
 	cc := fn.F()
-	state.debug.nextLoc = (cc.location)
+	if cc.macro && !state.macroMode {
+		reconstruct := L(pval(F(cc)).setNext(c.Next()))
+		return state.debug.popAndReturn(__exec(state.local.unwrapMacro(reconstruct, false, state.debug), state))
+	}
 
 	if cc.fun == nil {
-		if cc.macro && !state.macroMode {
-			return state.debug.popAndReturn(__exec(state.local.unwrapMacro(expr, false, state.debug), state))
-		}
 		m := &Context{parent: cc.natCls}
 		for i, name := range cc.natArgNames {
 			state.assert(c.MoveProNext(&c) || state.panic("too few arguments, expect at least %d", i+1))
 			m.set(name, __exec(c.Val(), state))
 		}
-		if cc.variadic {
+		if cc.vari {
 			values := InitListBuilder()
 			c.Next().ProRange(func(v Value) bool { values = values.Append(__exec(v, state)); return true })
 			m.set(cc.name, values.Build())
@@ -406,14 +391,16 @@ TAIL_CALL:
 			state.assert(!c.HasProNext() || state.panic("too many arguments, expect exact %d", len(cc.natArgNames)))
 		}
 		state.local, expr, tailCall = m, cc.nat, true
+		state.debug.nextLoc = (cc.source)
 		goto TAIL_CALL
 	}
 
 	args := InitListBuilder()
 	c.Next().ProRange(func(v Value) bool { args = args.Append(__exec(v, state)); return true })
-	state.assert(args.Len == cc.funMinArgNum || (cc.variadic && args.Len >= cc.funMinArgNum) ||
-		state.panic("call: expect "+ifstr(cc.variadic, "at least ", "")+strconv.Itoa(cc.funMinArgNum)+" arguments"))
+	state.assert(args.Len == cc.funMinArgNum || (cc.vari && args.Len >= cc.funMinArgNum) ||
+		state.panic("call: expect "+ifstr(cc.vari, "at least ", "")+strconv.Itoa(cc.funMinArgNum)+" arguments"))
 
+	state.debug.nextLoc = (cc.source)
 	s := State{Context: state.local, Out: Void, Caller: head, Stack: state.debug, Args: args.head}
 	cc.fun(&s)
 	return state.debug.popAndReturn(s.Out)
@@ -445,7 +432,7 @@ func (ctx *Context) Parse(filename, text string) (v Value, err error) {
 	} else {
 		v = L(Empty, Y("if", 0), Void, Void, v)
 	}
-	v = F(&Func{nat: v, natCls: ctx, funToplevel: true, location: filename})
+	v = F(&Func{nat: v, natCls: ctx, natToplevel: true, source: filename})
 	return L(Empty, v), nil
 }
 
@@ -538,13 +525,10 @@ LOOP:
 			break LOOP
 		case '.':
 			c := ctx.scan(s, true)
-			if c.Type() == LIST {
-				*comp.Current = *c.L()
-			} else {
-				comp.Current.setVal(c)._empty = false
-			}
+			ctx.assert(comp.last != nil || ctx.panic("invalid dot syntax")) // invalid e.g.: ( . a )
+			comp.last.SetCdr(c)
 			s := s.Scan()
-			ctx.assert(s == scanner.EOF || s == ']' || s == ')' || ctx.panic("invalid dot syntax"))
+			ctx.assert(s == scanner.EOF || s == ']' || s == ')' || ctx.panic("invalid dot syntax")) // invalid e.g.: ( a . b c )
 			return comp.Build()
 		case '\'', '`':
 			c := ctx.scan(s, true)
@@ -580,7 +564,7 @@ func (ctx *Context) unwrapMacro(v Value, quasi bool, stack *Stack) Value {
 		return v
 	}
 
-	comp := v.L()
+	comp, f := v.L(), (*Func)(nil)
 	if head := comp.Val(); head.Type() == SYM {
 		switch head.S() {
 		case "quote":
@@ -593,15 +577,20 @@ func (ctx *Context) unwrapMacro(v Value, quasi bool, stack *Stack) Value {
 			if quasi {
 				return v
 			}
-			if m, _ := ctx.Load(head.S()); m.Type() == FUNC && m.F().macro {
-				args := InitListBuilder().Append(head)
-				for comp.MoveProNext(&comp); !comp.ProEmpty(); comp.MoveProNext(&comp) {
-					args = args.Append(ctx.unwrapMacro(comp.Val(), false, stack).Quote())
-				}
-				v := __exec(args.Build(), execState{local: ctx, debug: stack, macroMode: true})
-				return ctx.unwrapMacro(v, false, stack)
+			if m, _ := ctx.Load(head.S()); m.Type() == FUNC {
+				f = m.F()
 			}
 		}
+	} else if head.Type() == FUNC {
+		f = head.F()
+	}
+	if f != nil && f.macro {
+		args := InitListBuilder().Append(F(f))
+		for comp.MoveProNext(&comp); !comp.ProEmpty(); comp.MoveProNext(&comp) {
+			args = args.Append(ctx.unwrapMacro(comp.Val(), false, stack).Quote())
+		}
+		v := __exec(args.Build(), execState{local: ctx, debug: stack, macroMode: true})
+		return ctx.unwrapMacro(v, false, stack)
 	}
 	old := comp
 	for ; comp != nil && !comp.Empty(); comp = comp.Next() {
@@ -722,7 +711,7 @@ func (v Value) Type() ValueType {
 	} else if v == Void {
 		return VOID
 	}
-	return ANY
+	return INTF
 }
 func (v Value) stringify(goStyle bool) string {
 	switch v.Type() {
@@ -738,7 +727,7 @@ func (v Value) stringify(goStyle bool) string {
 		return v.S() + ifstr(v.LineInfo() > 0, fmt.Sprintf(ifstr(goStyle, " /*L%d*/", " #|L%d|#"), v.LineInfo()), "")
 	case LIST:
 		vl, p := v.L(), bytes.NewBufferString("( ")
-		for ; vl != nil && !vl._empty; vl = vl.Next() {
+		for ; vl != nil && !vl.empty; vl = vl.Next() {
 			p.WriteString(ifstr(vl.Next() == nil, ". ", ""))
 			p.WriteString(vl.Val().stringify(goStyle))
 			p.WriteString(" ")
@@ -747,7 +736,7 @@ func (v Value) stringify(goStyle bool) string {
 		return p.String()
 	case BOOL:
 		return ifstr(v.B(), ifstr(goStyle, "true", "#t"), ifstr(goStyle, "false", "#f"))
-	case ANY:
+	case INTF:
 		return "#" + fmt.Sprint(v.A())
 	case FUNC:
 		return v.F().String()
@@ -771,7 +760,7 @@ func (v Value) V() interface{} {
 		return a
 	case BOOL:
 		return v.B()
-	case ANY:
+	case INTF:
 		return v.A()
 	case FUNC:
 		return v.F()
@@ -788,7 +777,7 @@ func (v Value) Equals(v2 Value) bool {
 			return v.val == v2.val && v.ptr == v2.ptr
 		case SYM, STR:
 			return v.S() == v2.S()
-		case ANY:
+		case INTF:
 			return v.A() == v2.A()
 		}
 	}
@@ -833,8 +822,8 @@ func (p *Pair) SetCar(v Value) *Pair   { p.val = v; return p }
 func (p *Pair) Next() *Pair            { return p.next }
 func (p *Pair) setVal(v Value) *Pair   { p.val = v; return p }
 func (p *Pair) setNext(p2 *Pair) *Pair { p.next = p2; return p }
-func (p *Pair) Improper() bool         { return p.Next() == nil && !p._empty }
-func (p *Pair) Empty() bool            { return p.Next() == nil && p._empty }
+func (p *Pair) Improper() bool         { return p.Next() == nil && !p.empty }
+func (p *Pair) Empty() bool            { return p.Next() == nil && p.empty }
 func (p *Pair) ProEmpty() bool         { panicif(p.Improper(), "improper list"); return p.Empty() }
 func (p *Pair) HasProNext() bool       { return p.Next() != nil && !p.Next().ProEmpty() }
 func (p *Pair) MoveProNext(ll **Pair) bool {
@@ -924,7 +913,7 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 		if lst := pattern.Val().L(); lst.Val().Type() == SYM && lst.Val().S() == "quote" {
 			if __exec(lst.Next().Val(), execState{
 				debug: state.debug,
-				local: &Context{parent: state.local, m: map[string]Value{"_": p.Val()}},
+				local: &Context{parent: state.local, M: map[string]Value{"_": p.Val()}},
 			}).IsFalse() {
 				return false
 			}
@@ -966,7 +955,7 @@ func (p *Pair) ProTake(n int) *Pair {
 func (p *Pair) ProAppend(l2 *Pair) *Pair {
 	b := InitListBuilder()
 	p.ProRange(func(v Value) bool { b = b.Append(v); return true })
-	*b.Current = *l2
+	*b.Cur = *l2
 	return b.head
 }
 func (p *Pair) Last() (last *Pair) {
@@ -1001,18 +990,14 @@ func (p *Pair) SetCdr(v Value) *Pair {
 	}
 	return p
 }
-func Cons(v, v2 Value) *Pair { return pval(v).SetCdr(v2) }
-func InitListBuilder() ListBuilder {
-	b := ListBuilder{Current: &Pair{_empty: true}}
-	b.head = b.Current
-	return b
-}
+func Cons(v, v2 Value) *Pair           { return pval(v).SetCdr(v2) }
+func InitListBuilder() (b ListBuilder) { b.Cur = &Pair{empty: true}; b.head = b.Cur; return b }
+func (b ListBuilder) Build() Value     { return L(b.head) }
 func (b ListBuilder) Append(v Value) ListBuilder {
-	panicif(!b.Current._empty, "append to improper list")
-	b.Current.setVal(v).setNext(&Pair{_empty: true})._empty = false
-	b.last = b.Current
-	b.Current = b.Current.Next()
+	panicif(!b.Cur.empty, "append to improper list")
+	b.Cur.setVal(v).setNext(&Pair{empty: true}).empty = false
+	b.last = b.Cur
+	b.Cur = b.Cur.Next()
 	b.Len++
 	return b
 }
-func (b ListBuilder) Build() Value { return L(b.head) }

@@ -87,6 +87,14 @@ func TestNumber(t *testing.T) {
 		}
 	}
 
+	for _, i := range []int64{1, -1} {
+		x := int64(math.MaxInt64) * i
+		v := I(x)
+		if v.Type() != NUM || v.I() != x {
+			t.FailNow()
+		}
+	}
+
 	var v uint64 = 0x8ffffffffffffff7
 	if I(int64(v)).Equals(N(math.Float64frombits(^v))) {
 		t.Fatal("check Value.Equals")
@@ -107,7 +115,7 @@ func TestOne(t *testing.T) {
 	}
 	_ = assert
 	it.Store("assert", NewFunc(1, func(s *State) {
-		if s.In().IsFalse() {
+		if s.PopArg().IsFalse() {
 			panic(fmt.Errorf("assertion failed"))
 		}
 	}))
@@ -117,7 +125,7 @@ func TestOne(t *testing.T) {
 		s.Out = S(locs[len(locs)-1])
 	}))
 	it.Store("test/struct-gen", NewFunc(1, func(s *State) {
-		if s.In().IsFalse() {
+		if s.PopArg().IsFalse() {
 			s.Out = V((*dummy)(nil))
 			return
 		}
@@ -135,7 +143,7 @@ func TestOne(t *testing.T) {
 		return a
 	}))
 	it.Store("make/bytes", NewFunc(1, func(s *State) {
-		n := s.In().V()
+		n := s.PopArg().V()
 		l := make([]byte, n.(int64))
 		for i := 0; i < len(l); i++ {
 			l[i] = byte(i) + 1
@@ -143,7 +151,7 @@ func TestOne(t *testing.T) {
 		s.Out = V(l)
 	}))
 	it.Store("make/list", NewFunc(1, func(s *State) {
-		l := make([]Value, s.InType('n').I())
+		l := make([]Value, s.PopArgAs('n').I())
 		for i := 0; i < len(l); i++ {
 			l[i] = N(float64(i) + 1)
 		}
@@ -151,7 +159,7 @@ func TestOne(t *testing.T) {
 	}))
 	it.Store("range", NewFunc(2, func(s *State) {
 		m := s.InMap()
-		f := s.InType('f')
+		f := s.PopArgAs('f')
 		for k, v := range m {
 			err, _ := f.F().Call(s.Stack, S(k), v)
 			if err.IsFalse() {
@@ -161,8 +169,8 @@ func TestOne(t *testing.T) {
 		}
 	}))
 	it.Store("iff", NewFunc(2|Macro, func(s *State) {
-		s.In()
-		s.Out = s.In()
+		s.PopArg()
+		s.Out = s.PopArg()
 	}))
 
 	// assert("s/fib.scm")

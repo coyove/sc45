@@ -40,8 +40,8 @@ func (v Value) Marshal() (buf []byte, err error) {
 		}
 	}()
 	p := &bytes.Buffer{}
-	if v.Type() == 'l' && !v.L()._empty && v.L().Next() == Empty {
-		if v2 := v.L().Val(); v2.Type() == 'f' && v2.F().funToplevel {
+	if v.Type() == 'l' && !v.L().empty && v.L().Next() == Empty {
+		if v2 := v.L().Val(); v2.Type() == 'f' && v2.F().natToplevel {
 			v = v2.F().nat
 		}
 	}
@@ -72,7 +72,7 @@ func writeString(p *bytes.Buffer, s string) {
 func (v Value) marshal(p *bytes.Buffer) {
 
 	switch v.Type() {
-	case 'n':
+	case NUM:
 		vf, vi, vIsInt := v.N()
 		if vIsInt {
 			p.WriteByte('N')
@@ -83,19 +83,19 @@ func (v Value) marshal(p *bytes.Buffer) {
 			p.WriteByte('n')
 			binary.Write(p, binary.BigEndian, vf)
 		}
-	case 'y':
+	case SYM:
 		p.WriteByte('y')
 		var tmp [10]byte
 		n := binary.PutVarint(tmp[:], int64(v.LineInfo()))
 		p.Write(tmp[:n])
 		fallthrough
-	case 's':
+	case STR:
 		p.WriteByte('s')
 		writeString(p, v.S())
-	case 'l':
+	case LIST:
 		p.WriteByte('l')
 		vl := v.L()
-		for vl != nil && !vl._empty {
+		for vl != nil && !vl.empty {
 			if vl.Next() == nil {
 				p.WriteByte(0)
 			} else {
@@ -105,15 +105,15 @@ func (v Value) marshal(p *bytes.Buffer) {
 			vl = vl.Next()
 		}
 		p.WriteByte('L')
-	case 'b':
+	case BOOL:
 		if v.B() {
 			p.WriteByte('B')
 		} else {
 			p.WriteByte('b')
 		}
-	case 'f':
+	case FUNC:
 		panic(fmt.Errorf("function cannot be marshalled"))
-	case 'i':
+	case INTF:
 		i := v.V()
 		t := reflect.TypeOf(i)
 		if goTypesRegRev[t] == 0 {
@@ -171,7 +171,7 @@ func (v *Value) unmarshal(p interface {
 				vl = vl.Append(v2)
 			case 0:
 				v2.unmarshal(p)
-				vl.Current.setVal(v2)._empty = false
+				vl.Cur.setVal(v2).empty = false
 				break LOOP
 			case 'L':
 				break LOOP

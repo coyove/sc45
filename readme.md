@@ -33,6 +33,6 @@ Inside REPL:
 ```
 
 # Language details
-- `call/cc` is not supported, due to sc45's recursive evaluation intepreter, this is also impossible (maybe possible by using goroutines, but with great performance penalty)
-- Numbers are float64 + int64 internally, int64 will be promoted to float64 when necessary
+- `call/cc` is not supported, due to sc45's recursive evaluation intepreter, this is also impossible
+- Numbers are float64 + int64 internally, int64 will be promoted to float64 when needed
 - Macro definition syntax: `(define name (lambda-syntax (paramlist) body))`, macro is a legit function which takes expressions as inputs and outputs expressions, so it is more like Lisp macro

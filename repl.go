@@ -81,7 +81,7 @@ function post(url, data, cb) {
 
 		if r.FormValue("all") != "" {
 			keys := []map[string]string{}
-			for k := range ctx.Unsafe() {
+			for k := range ctx.M {
 				keys = append(keys, map[string]string{"key": k, "doc": k})
 			}
 			buf, _ := json.Marshal(keys)

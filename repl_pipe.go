@@ -23,7 +23,7 @@ func (ctx *Context) RunSimplePipeREPL(path string) error {
 	touch2() { mkdir -Current "$(dirname "$1")" && touch "$1" ; }
 	`)
 
-	for name := range ctx.Unsafe() {
+	for name := range ctx.M {
 		if len(name) == 0 || !unicode.IsLetter(rune(name[0])) {
 			continue
 		}

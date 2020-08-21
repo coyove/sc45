@@ -9,6 +9,7 @@
 
 (assert (= 0x3fffffffffffff (+ 0x3ffffffffffffe 1)))
 (assert (= 36028797018963964 (* 0x3ffffffffffffe 2)))
+(assert (= (/ 36028797018963962 2) 0x3ffffffffffffd)))
 (assert (< 0x7ffffffffffffe (string->number "0x7fffffffffffff")))
 
 (assert (= 2 (pcall (lambda (e) (+ e 1)) (lambda () (assert (= 1 1)) (raise 1) (* 3 4)))))
@@ -105,3 +106,7 @@
   (assert (= "12ab" (apply Fun args)))
   )
 
+(assert (= 0.5 ((lambda-syntax (a b)
+                               `(begin
+                                  (display "macro inline" ,a ,b) 
+                                  (/ ,b ,a))) 2 1)))
