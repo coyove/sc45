@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 )
 
 func (ctx *Context) InjectDebugPProfREPL(title string) {
@@ -90,9 +92,13 @@ function post(url, data, cb) {
 		}
 
 		cmd := r.FormValue("cmd")
+		timeout, _ := strconv.ParseInt(r.FormValue("timeout"), 10, 64)
+		if timeout == 0 {
+			timeout = 60
+		}
 
 		ww.Reset()
-		v, err := ctx.Run(cmd)
+		v, err := ctx.Run(time.Now().Add(time.Duration(timeout)*time.Second), cmd)
 
 		var resp = respStruct{
 			Stdout: ww.String(),

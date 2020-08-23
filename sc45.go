@@ -11,18 +11,19 @@ import (
 	"strconv"
 	"strings"
 	"text/scanner"
+	"time"
 	"unicode"
 	"unicode/utf8"
 	"unsafe"
 )
 
 var (
-	Default       = &Context{}
-	Vararg, Macro = 1 << 30, 1 << 29
-	Void, Quote   = Value{}, Y("quote", 0)
-	Empty         = &Pair{empty: true}
-	Types         = map[ValueType]string{STR: "string", SYM: "symbol", NUM: "number", LIST: "list", INTF: "interface", FUNC: "function", VOID: "void", BOOL: "boolean"}
-	int64Marker   = unsafe.Pointer(new(int64))
+	Default, Now, Forever = &Context{}, func() int64 { return time.Now().Unix() }, time.Unix(1<<32, 0)
+	Vararg, Macro         = 1 << 30, 1 << 29
+	Void, Quote           = Value{}, Y("quote", 0)
+	Empty                 = &Pair{empty: true}
+	Types                 = map[ValueType]string{STR: "string", SYM: "symbol", NUM: "number", LIST: "list", INTF: "interface", FUNC: "function", VOID: "void", BOOL: "boolean"}
+	int64Marker           = unsafe.Pointer(new(int64))
 )
 
 const STR, SYM, NUM, BOOL, LIST, INTF, FUNC, VOID, ANY ValueType = 's', 'y', 'n', 'b', 'l', 'i', 'f', 'v', 'a'
@@ -53,8 +54,9 @@ type (
 		*Context
 		assertable
 		argIdx              int
+		deadline            int64
 		Args                *Pair
-		LastIn, Out, Caller Value
+		LastIn, Caller, Out Value
 		Stack               *Stack
 	}
 	Context struct {
@@ -76,6 +78,7 @@ type (
 	}
 	execState struct {
 		assertable
+		deadline  int64
 		debug     *Stack
 		local     *Context
 		macroMode bool
@@ -120,7 +123,10 @@ func (s *Stack) String() (p string) {
 	return strings.TrimSpace(p)
 }
 
-func (f *Func) Call(dbg *Stack, a ...Value) (result Value, err error) {
+func (f *Func) Call(a ...Value) (result Value, err error) {
+	return f.CallOnStack(nil, Forever, a...)
+}
+func (f *Func) CallOnStack(dbg *Stack, deadline time.Time, a ...Value) (result Value, err error) {
 	expr := InitListBuilder().Append(F(f).Quote())
 	for i := range a {
 		expr = expr.Append(a[i].Quote())
@@ -129,9 +135,8 @@ func (f *Func) Call(dbg *Stack, a ...Value) (result Value, err error) {
 		dbg = &Stack{nextLoc: toplevelName}
 	}
 	defer debugCatch(dbg, &err)
-	return __exec(expr.Build(), execState{local: (*Context)(nil), debug: dbg}), nil
+	return __exec(expr.Build(), execState{local: (*Context)(nil), debug: dbg, deadline: deadline.Unix()}), nil
 }
-
 func (f *Func) String() string {
 	if f.nat == Void {
 		return ifstr(f.name == "", "#|missing native code|#", f.name+" #|native code|#")
@@ -149,12 +154,13 @@ func (s *State) Pop() Value {
 	s.Args = s.Args.next
 	return v
 }
-
 func (s *State) PopAs(t ValueType) Value {
 	v := s.Pop()
 	s.assert(t == ANY || v.Type() == t || s.panic("invalid argument #%d, expect %s, got %v", s.argIdx, Types[t], v))
 	return v
 }
+func (s *State) Deadline() time.Time    { return time.Unix(s.deadline, 0) }
+func (s *State) Timeout() time.Duration { return s.Deadline().Sub(time.Now()) }
 
 func (ctx *Context) find(k string) (Value, *Context) {
 	for ; ctx != nil; ctx = ctx.parent {
@@ -253,6 +259,7 @@ TAIL_CALL:
 		return expr
 	}
 
+	state.assert(Now() < state.deadline || state.panic("timeout"))
 	c := expr.L()
 	if c.MustProper().Empty() {
 		return L(Empty)
@@ -298,9 +305,7 @@ TAIL_CALL:
 				f.vararg = true
 			}
 			state.assert(moveCdr(&c) || state.panic("lambda: missing body"))
-			if f.nat = c.val; c.HasProperCdr() {
-				f.nat = L(c, head.Y("lambda-body"), Void, Void)
-			}
+			_ = c.HasProperCdr() && f.nat.of(L(c, head.Y("lambda-body"), Void, Void)) || f.nat.of(c.val)
 			return state.debug.popAndReturn(F(f))
 		case "match":
 			state.assert(moveCdr(&c) || state.panic("match: missing source"))
@@ -321,7 +326,7 @@ TAIL_CALL:
 			}
 			m := &Context{parent: state.local, M: map[string]Value{}}
 			if source.L().match(state, pattern, false, symbolmap, m.M) {
-				return state.debug.popAndReturn(__exec(c.val, execState{debug: state.debug, local: m}))
+				return state.debug.popAndReturn(__exec(c.val, execState{debug: state.debug, local: m, deadline: state.deadline}))
 			}
 			if c.HasProperCdr() {
 				goto MATCH_NEXT
@@ -333,9 +338,7 @@ TAIL_CALL:
 		case "quasiquote":
 			state.assert(moveCdr(&c) || state.panic("invalid quasiquote syntax"))
 			v, p := __execQuasi(c.val, state)
-			if p != nil {
-				return state.debug.popAndReturn(L(p))
-			}
+			_ = p != nil && v.of(L(p)) || v.of(v)
 			return state.debug.popAndReturn(v)
 		case "unquote", "unquote-splicing":
 			panic(fmt.Errorf("unquote outside quasiquote"))
@@ -380,11 +383,8 @@ TAIL_CALL:
 		if head.Type() == SYM {
 			// The macro is bounded with a symbol and will not be altered ever, so we can replace the expression with the unwrapped one
 			// The opposite case is like: ((if cond macro1 macro2) a b c ...), we have to unwrap every time
-			if reconstruct.Type() == LIST {
-				*c = *reconstruct.L()
-			} else {
-				*c = *L(Empty, head.Y("if"), Void, Void, reconstruct).L()
-			}
+			_ = reconstruct.Type() == LIST && reconstruct.of(reconstruct) || reconstruct.of(L(Empty, head.Y("if"), Void, Void, reconstruct))
+			*c = *reconstruct.L()
 		}
 		state.macroMode = false
 		return state.debug.popAndReturn(__exec(reconstruct, state))
@@ -415,7 +415,7 @@ TAIL_CALL:
 		state.panic("call: expect "+ifstr(cc.vararg, "at least ", "")+strconv.Itoa(cc.funMinArgNum)+" arguments"))
 
 	state.debug.nextLoc = (cc.source)
-	s := State{Context: state.local, Out: Void, Caller: head, Stack: state.debug, Args: args.head}
+	s := State{Context: state.local, Caller: head, Stack: state.debug, Args: args.head, deadline: state.deadline}
 	cc.fun(&s)
 	return state.debug.popAndReturn(s.Out)
 }
@@ -431,11 +431,7 @@ func (ctx *Context) Parse(filename, text string) (v Value, err error) {
 	}()
 
 	v = ctx.scan(s, false)
-	if v.Type() == LIST {
-		v = L(v.L(), Y("if", 0), Void, Void)
-	} else {
-		v = L(Empty, Y("if", 0), Void, Void, v)
-	}
+	_ = v.Type() == LIST && v.of(L(v.L(), Y("if", 0), Void, Void)) || v.of(L(Empty, Y("if", 0), Void, Void, v))
 	v = F(&Func{nat: v, natCls: ctx, natToplevel: true, source: filename})
 	return L(Empty, v), nil
 }
@@ -449,13 +445,13 @@ func debugCatch(dbg *Stack, err *error) {
 	}
 }
 
-func (ctx *Context) Exec(c Value) (output Value, err error) {
+func (ctx *Context) Exec(deadline time.Time, c Value) (output Value, err error) {
 	dbg := &Stack{nextLoc: toplevelName}
 	defer debugCatch(dbg, &err)
-	return __exec(c, execState{local: ctx, debug: dbg}), nil
+	return __exec(c, execState{local: ctx, debug: dbg, deadline: deadline.Unix() + 1}), nil
 }
 
-func (ctx *Context) RunFile(path string) (result Value, err error) {
+func (ctx *Context) RunFile(deadline time.Time, path string) (result Value, err error) {
 	buf, err := ioutil.ReadFile(path)
 	if err != nil {
 		return Void, err
@@ -464,15 +460,15 @@ func (ctx *Context) RunFile(path string) (result Value, err error) {
 	if err != nil {
 		return Void, err
 	}
-	return ctx.Exec(c)
+	return ctx.Exec(deadline, c)
 }
 
-func (ctx *Context) Run(tmpl string) (result Value, err error) {
+func (ctx *Context) Run(deadline time.Time, tmpl string) (result Value, err error) {
 	c, err := ctx.Parse("(memory)", tmpl)
 	if err != nil {
 		return Void, err
 	}
-	return ctx.Exec(c)
+	return ctx.Exec(deadline, c)
 }
 
 func (ctx *Context) scan(s *scanner.Scanner, scanOne bool) Value {
@@ -548,9 +544,14 @@ LOOP:
 			comp = comp.Append(L(Empty, Y(ifstr(sp, "unquote-splicing", "unquote"), 0), c))
 		default:
 			text := s.TokenText() + scanToDelim(s)
-			if v, ok := strconv.ParseInt(text, 0, 64); ok == nil || tok == scanner.Int {
-				comp = comp.Append(I(v))
-			} else if v, ok := strconv.ParseFloat(text, 64); ok == nil || tok == scanner.Float {
+			if v, err := strconv.ParseInt(text, 0, 64); err == nil || tok == scanner.Int {
+				if err, _ := err.(*strconv.NumError); err != nil && err.Err == strconv.ErrRange {
+					v, _ := strconv.ParseFloat(text, 64)
+					comp = comp.Append(N(v))
+				} else {
+					comp = comp.Append(I(v))
+				}
+			} else if v, err := strconv.ParseFloat(text, 64); err == nil || tok == scanner.Float {
 				comp = comp.Append(N(v))
 			} else {
 				comp = comp.Append(Y(text, uint32(s.Pos().Line)))
@@ -580,11 +581,7 @@ func (e *assertable) assert(ok bool) *assertable {
 	}
 	return e
 }
-
-func (e *assertable) panic(t string, a ...interface{}) bool {
-	e.err = fmt.Errorf(t, a...)
-	return false
-}
+func (e *assertable) panic(t string, a ...interface{}) bool { e.err = fmt.Errorf(t, a...); return false }
 
 func ifstr(v bool, t, f string) string {
 	if v {
@@ -619,7 +616,7 @@ func V(v interface{}) (va Value) {
 	case reflect.Bool:
 		return B(rv.Bool())
 	}
-	*(*interface{})(unsafe.Pointer(&va)) = v
+	*va.A() = v
 	return va
 }
 func B(v bool) Value {
@@ -638,27 +635,22 @@ func L(lst *Pair, l ...Value) Value {
 
 // Float64 available range in uint64: 0x0 - 0x7FF00000`00000001, 0x80000000`00000000 - 0xFFF00000`00000000
 // When bit-inverted, the range is: 0x800FFFFF`FFFFFFFE - 0xFFFFFFFF`FFFFFFFF, 0x000FFFFF`FFFFFFFF - 0x7FFFFFFF`FFFFFFFF
-func N(v float64) Value {
-	if math.IsNaN(v) {
-		return Value{val: 0x800FFFFFFFFFFFFE} // ^7FF0000000000001
-	}
-	return Value{val: ^math.Float64bits(v)}
+func N(v float64) (n Value) {
+	_ = math.IsNaN(v) && n.of(Value{val: 0x800FFFFFFFFFFFFE} /* ^7FF0000000000001 */) || n.of(Value{val: ^math.Float64bits(v)})
+	return
 }
-func I(v int64) Value {
-	if int64(float64(v)) == v {
-		return N(float64(v))
-	}
-	return Value{val: uint64(v), ptr: int64Marker}
+func I(v int64) (i Value) {
+	_ = int64(float64(v)) == v && i.of(N(float64(v))) || i.of(Value{val: uint64(v), ptr: int64Marker})
+	return
 }
 func Y(v string, ln uint32) Value { return Value{ptr: unsafe.Pointer(&v), val: 1<<51 | uint64(ln)} }
 func S(v string) (vs Value)       { return Value{val: uint64(STR), ptr: unsafe.Pointer(&v)} }
 func F(f *Func) Value             { return Value{val: uint64(FUNC), ptr: unsafe.Pointer(f)} }
 
-func (v Value) Quote() Value {
-	if t := v.Type(); t == LIST || t == SYM {
-		return L(Empty, Quote, v)
-	}
-	return v
+func (v Value) Quote() (q Value) {
+	t := v.Type()
+	_ = (t == LIST || t == SYM) && q.of(L(Empty, Quote, v)) || q.of(v)
+	return
 }
 func (v Value) Type() ValueType {
 	switch v.val {
@@ -725,7 +717,7 @@ func (v Value) V() interface{} {
 	case BOOL:
 		return v.B()
 	case INTF:
-		return v.A()
+		return *v.A()
 	case FUNC:
 		return v.F()
 	default:
@@ -766,16 +758,19 @@ func (v Value) I() int64 {
 	}
 	return int64(math.Float64frombits(^v.val))
 }
+func (v *Value) A() *interface{} {
+	return (*interface{})(unsafe.Pointer((uintptr(unsafe.Pointer(v)) + (64-strconv.IntSize)/8)))
+}
 func (v Value) F() *Func            { return (*Func)(v.ptr) }
 func (v Value) B() bool             { return v.val == 2 }
 func (v Value) S() string           { return *(*string)(v.ptr) }
 func (v Value) L() *Pair            { return (*Pair)(v.ptr) }
-func (v Value) A() interface{}      { return *(*interface{})(unsafe.Pointer(&v)) }
 func (v Value) Y(text string) Value { return Y(text, uint32(v.Type()/SYM)*v.LineInfo()) }
 func (v Value) LineInfo() uint32    { return uint32(v.val) }
 func (v Value) String() string      { return v.stringify(false) }
 func (v Value) GoString() string    { return fmt.Sprintf("{val:%016x ptr:%016x}", v.val, v.ptr) }
 func (v Value) IsFalse() bool       { return v.val < 2 } // 0: void, 1: false
+func (v *Value) of(v2 Value) bool   { *v = v2; return true }
 
 func (p *Pair) Car() Value           { panicif(p.Empty(), "car: empty list"); return p.val }
 func (p *Pair) SetCar(v Value) *Pair { panicif(p.Empty(), "car: empty list"); p.val = v; return p }
@@ -858,8 +853,9 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 	case LIST:
 		if lst := pattern.val.L(); lst.val.Type() == SYM && lst.val.S() == "quote" {
 			if __exec(lst.next.val, execState{
-				debug: state.debug,
-				local: &Context{parent: state.local, M: map[string]Value{"_": p.val}},
+				deadline: state.deadline,
+				debug:    state.debug,
+				local:    &Context{parent: state.local, M: map[string]Value{"_": p.val}},
 			}).IsFalse() {
 				return false
 			}
@@ -910,13 +906,11 @@ func (p *Pair) IsProperList() bool {
 		}
 	}
 }
-func (p *Pair) Cdr() Value {
+func (p *Pair) Cdr() (v Value) {
 	p = p.next
 	panicif(p == nil, "cdr: empty list")
-	if p.Improper() {
-		return p.val
-	}
-	return L(p)
+	_ = p.Improper() && v.of(p.val) || v.of(L(p))
+	return
 }
 func (p *Pair) SetCdr(v Value) *Pair {
 	panicif(p.Empty(), "cdr: empty list")

@@ -13,11 +13,15 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 	"unsafe"
 )
 
-var DefaultStdout io.Writer = os.Stdout
-var stateType = reflect.TypeOf(&State{})
+var (
+	DefaultStdout io.Writer = os.Stdout
+	stateType               = reflect.TypeOf(&State{})
+	fastNow       int64     = time.Now().Unix()
+)
 
 func (s *State) InMap() map[string]Value {
 	v, _ := s.PopAs(INTF).V().(map[string]Value)
@@ -95,6 +99,13 @@ func NewGoFunc(fn interface{}) Value {
 func _Ft(t ValueType) Value { return NewFunc(1, func(s *State) { s.Out = B(s.Pop().Type() == t) }) }
 
 func init() {
+	Now = func() int64 { return fastNow }
+	go func() {
+		for range time.Tick(time.Second) {
+			fastNow = time.Now().Unix()
+		}
+	}()
+
 	Default.Store("true", B(true)).Store("false", B(false)).Store("begin", NewFunc(Macro|Vararg, func(s *State) {
 		s.Out = L(s.Args, s.Caller.Y("if"), Void, Void)
 	})).Store("and", NewFunc(Macro|Vararg, func(s *State) {
@@ -200,7 +211,7 @@ func init() {
 		fn := L(Empty, s.Caller.Y("lambda"), L(Empty, names...), L(s.Args, s.Caller.Y("if"), Void, Void))
 		s.Out = L(L(Empty, values...).L(), fn)
 	})).Store("eval", NewFunc(1, func(s *State) {
-		s.Out = __exec(s.Pop(), execState{local: s.Context, debug: s.Stack})
+		s.Out = __exec(s.Pop(), execState{local: s.Context, debug: s.Stack, deadline: s.deadline})
 	})).Store("parse", NewFunc(1, func(s *State) {
 		x := s.PopAs(STR).S()
 		if _, err := os.Stat(x); err == nil {
@@ -253,16 +264,16 @@ func init() {
 				if rc.Type() != FUNC {
 					s.Out = V(r)
 				} else {
-					s.Out = ev2(rc.F().Call(s.Stack, V(r)))
+					s.Out = ev2(rc.F().CallOnStack(s.Stack, s.Deadline(), V(r)))
 				}
 				s.Stack.Frames = old
 			}
 		}()
-		s.Out = __exec(L(Empty, s.Pop().Quote()), execState{debug: s.Stack, local: s.Context})
+		s.Out = __exec(L(Empty, s.Pop().Quote()), execState{debug: s.Stack, local: s.Context, deadline: s.deadline})
 	})).Store("apply", NewFunc(2, func(s *State) {
 		expr := InitListBuilder().Append(s.PopAs(FUNC).Quote())
 		s.PopAs(LIST).L().Foreach(func(v Value) bool { expr = expr.Append(v.Quote()); return true })
-		v, err := (*Context)(nil).Exec(expr.Build())
+		v, err := (*Context)(nil).Exec(s.Deadline(), expr.Build())
 		s.assert(err == nil || s.panic("apply panic: %v", err))
 		s.Out = v
 	})).
@@ -450,7 +461,7 @@ func init() {
 	Default.Store("vector-foreach", NewFunc(2, func(s *State) {
 		rl, fn := reflect.ValueOf(s.Pop().V()), s.PopAs(FUNC)
 		for i := 0; i < rl.Len(); i++ {
-			flag, err := fn.F().Call(s.Stack, I(int64(i)), V(rl.Index(i).Interface()))
+			flag, err := fn.F().CallOnStack(s.Stack, s.Deadline(), I(int64(i)), V(rl.Index(i).Interface()))
 			s.assert(err == nil || s.panic("invalid callback "))
 			if flag.IsFalse() {
 				break
@@ -460,7 +471,7 @@ func init() {
 	Default.Store("map", NewFunc(2, func(s *State) {
 		fn, r, l, i := s.PopAs(FUNC), []Value{}, s.PopAs(LIST).L(), 0
 		l.Foreach(func(h Value) bool {
-			v, err := fn.F().Call(s.Stack, h)
+			v, err := fn.F().CallOnStack(s.Stack, s.Deadline(), h)
 			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
 			r = append(r, v)
 			i++
@@ -472,7 +483,7 @@ func init() {
 		fn, left, l, i := s.PopAs(FUNC), s.Pop(), s.PopAs(LIST).L(), 0
 		var err error
 		l.Foreach(func(h Value) bool {
-			left, err = fn.F().Call(s.Stack, left, h)
+			left, err = fn.F().CallOnStack(s.Stack, s.Deadline(), left, h)
 			s.assert(err == nil || s.panic("reduce: error at element #%d: %v", i, err))
 			i++
 			return true
@@ -483,7 +494,7 @@ func init() {
 		fn, right, rl := s.PopAs(FUNC), s.Pop(), s.PopAs(LIST).L().ToSlice()
 		var err error
 		for i := len(rl) - 1; i >= 0; i-- {
-			right, err = fn.F().Call(s.Stack, right, rl[i])
+			right, err = fn.F().CallOnStack(s.Stack, s.Deadline(), right, rl[i])
 			s.assert(err == nil || s.panic("reduce-right: error at element #%d: %v", i, err))
 		}
 		s.Out = right
@@ -662,7 +673,7 @@ func init() {
 	}))
 
 	Default.Store("i64", NewFunc(1, func(s *State) { s.Out = s.Pop() }))
-	Default.Store("u64", NewFunc(1, func(s *State) { *(*interface{})(unsafe.Pointer(&s.Out)) = uint64(s.PopAs(NUM).I()) }))
+	Default.Store("u64", NewFunc(1, func(s *State) { *s.Out.A() = uint64(s.PopAs(NUM).I()) }))
 	// 	// SRFI-9
 	// 	type record struct {
 	// 		name   string

@@ -57,7 +57,7 @@ done
 		cmd := string(bytes.TrimSpace(tmp[:n]))
 
 		ww.Reset()
-		v, err := ctx.Run(cmd)
+		v, err := ctx.Run(Forever, cmd)
 
 		resp := bytes.Buffer{}
 		resp.WriteString("out > ")

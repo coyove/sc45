@@ -27,6 +27,8 @@ func (d *dummy) M(v string, args ...string) string {
 	return v + args[0]
 }
 
+func set(v *Value, v2 Value) bool { *v = v2; return true }
+
 func TestMarshal(t *testing.T) {
 	RegisterGoType(&dummy{})
 	RegisterGoType(dummy{})
@@ -43,14 +45,14 @@ func TestMarshal(t *testing.T) {
 		s.Out = V(d)
 	}))
 
-	v, _ := it.Run("(pd)")
+	v, _ := it.Run(Forever, "(pd)")
 	buf, err := v.Marshal()
 	panicerr(err)
 	panicerr(v.Unmarshal(buf))
 	if d := v.V().(*dummy); d.V.V3 != 10 {
 		t.Fatal(d)
 	}
-	v, _ = it.Run("(d)")
+	v, _ = it.Run(Forever, "(d)")
 	buf, err = v.Marshal()
 	panicerr(err)
 	panicerr(v.Unmarshal(buf))
@@ -104,9 +106,9 @@ func TestNumber(t *testing.T) {
 func TestOne(t *testing.T) {
 	it := New()
 	assert := func(v string) {
-		r, err := it.RunFile(v)
+		r, err := it.RunFile(time.Now().Add(30*time.Second), v)
 		if err != nil && strings.HasPrefix(v, "(") {
-			r, err = it.Run(v)
+			r, err = it.Run(Forever, v)
 		}
 		if err != nil {
 			t.Fatal(v, err)
@@ -161,7 +163,7 @@ func TestOne(t *testing.T) {
 		m := s.InMap()
 		f := s.PopAs('f')
 		for k, v := range m {
-			err, _ := f.F().Call(s.Stack, S(k), v)
+			err, _ := f.F().CallOnStack(s.Stack, Forever, S(k), v)
 			if err.IsFalse() {
 				s.Out = v
 				return
@@ -184,14 +186,14 @@ func TestOne(t *testing.T) {
 	// (eval '(foo (lambda () (display (current-location)) (assert (substring? (current-location) "memory")) )))`)
 
 	{
-		_, err := it.Run(`(define foo (eval (parse "s/module.scm"))) (eval '(foo 99))`)
+		_, err := it.Run(Forever, `(define foo (eval (parse "s/module.scm"))) (eval '(foo 99))`)
 		if !strings.Contains(err.Error(), "s/module.scm") {
 			t.Fatal(err)
 		}
 	}
 
 	{
-		_, err := it.Run(`(define foo (eval (parse "s/module.scm"))) 
+		_, err := it.Run(Forever, `(define foo (eval (parse "s/module.scm"))) 
 (define m# (lambda-syntax whatever (foo 10)))
 (m#)
 		`)
@@ -206,7 +208,7 @@ func BenchmarkRun(b *testing.B) {
 	text := strings.Repeat("'(1 2 3)", 10)
 	for i := 0; i < b.N; i++ {
 		it := New()
-		it.Run(text)
+		it.Run(Forever, text)
 	}
 }
 
