@@ -20,7 +20,7 @@ var DefaultStdout io.Writer = os.Stdout
 var stateType = reflect.TypeOf(&State{})
 
 func (s *State) InMap() map[string]Value {
-	v, _ := s.PopArgAs(INTF).V().(map[string]Value)
+	v, _ := s.PopAs(INTF).V().(map[string]Value)
 	return v
 }
 
@@ -63,18 +63,18 @@ func NewGoFunc(fn interface{}) Value {
 				if t := rt.In(i); i == 0 && t == stateType {
 					ins = append(ins, reflect.ValueOf(s))
 				} else {
-					ins = append(ins, s.PopArg().TypedVal(t))
+					ins = append(ins, s.Pop().TypedVal(t))
 				}
 			}
-			for !s.Args.ProEmpty() {
-				ins = append(ins, s.PopArg().TypedVal(rt.In(rt.NumIn()-1).Elem()))
+			for !s.Args.MustProper().Empty() {
+				ins = append(ins, s.Pop().TypedVal(rt.In(rt.NumIn()-1).Elem()))
 			}
 		} else {
 			for i := 0; i < rt.NumIn(); i++ {
 				if t := rt.In(i); i == 0 && t == stateType {
 					ins = append(ins, reflect.ValueOf(s))
 				} else {
-					ins = append(ins, s.PopArg().TypedVal(t))
+					ins = append(ins, s.Pop().TypedVal(t))
 				}
 			}
 		}
@@ -92,75 +92,75 @@ func NewGoFunc(fn interface{}) Value {
 	})
 }
 
-func _Ft(t ValueType) Value { return NewFunc(1, func(s *State) { s.Out = B(s.PopArg().Type() == t) }) }
+func _Ft(t ValueType) Value { return NewFunc(1, func(s *State) { s.Out = B(s.Pop().Type() == t) }) }
 
 func init() {
 	Default.Store("true", B(true)).Store("false", B(false)).Store("begin", NewFunc(Macro|Vararg, func(s *State) {
 		s.Out = L(s.Args, s.Caller.Y("if"), Void, Void)
 	})).Store("and", NewFunc(Macro|Vararg, func(s *State) {
-		if s.Args.ProEmpty() {
+		if s.Args.MustProper().Empty() {
 			s.Out = B(true)
-		} else if !s.Args.HasProNext() {
-			s.Out = s.PopArg()
+		} else if !s.Args.HasProperCdr() {
+			s.Out = s.Pop()
 		} else {
-			s.Out = L(Empty, s.Caller.Y("if"), s.PopArg(), L(s.Args, s.Caller.Y("and")), B(false))
+			s.Out = L(Empty, s.Caller.Y("if"), s.Pop(), L(s.Args, s.Caller.Y("and")), B(false))
 		}
 	})).Store("or", NewFunc(Macro|Vararg, func(s *State) {
-		if s.Args.ProEmpty() {
+		if s.Args.MustProper().Empty() {
 			s.Out = B(false)
-		} else if !s.Args.HasProNext() {
-			s.Out = s.PopArg()
+		} else if !s.Args.HasProperCdr() {
+			s.Out = s.Pop()
 		} else {
-			s.Out = L(Empty, s.Caller.Y("if"), s.PopArg(), B(true), L(s.Args, s.Caller.Y("or")))
+			s.Out = L(Empty, s.Caller.Y("if"), s.Pop(), B(true), L(s.Args, s.Caller.Y("or")))
 		}
 	})).Store("==", NewFunc(1|Vararg, func(s *State) {
 		flag := true
-		for last := s.PopArg(); flag && !s.Args.ProEmpty(); last = s.LastIn {
-			flag = last.Equals(s.PopArg())
+		for last := s.Pop(); flag && !s.Args.MustProper().Empty(); last = s.LastIn {
+			flag = last.Equals(s.Pop())
 		}
 		s.Out = B(flag)
 	})).Store("=", Default.M["=="]).Store("!=", NewFunc(1|Vararg, func(s *State) {
-		s.Out = B(!s.PopArg().Equals(s.PopArg()))
+		s.Out = B(!s.Pop().Equals(s.Pop()))
 	})).Store("<>", Default.M["!="]).Store("<", NewFunc(1|Vararg, func(s *State) {
 		flag := true
-		for last := s.PopArgAs('n'); flag && !s.Args.ProEmpty(); last = s.LastIn {
-			flag = last.Less(s.PopArgAs('n'), false)
+		for last := s.PopAs('n'); flag && !s.Args.MustProper().Empty(); last = s.LastIn {
+			flag = last.Less(s.PopAs('n'), false)
 		}
 		s.Out = B(flag)
 	})).Store("<=", NewFunc(1|Vararg, func(s *State) {
 		flag := true
-		for last := s.PopArgAs('n'); flag && !s.Args.ProEmpty(); last = s.LastIn {
-			flag = last.Less(s.PopArgAs('n'), true)
+		for last := s.PopAs('n'); flag && !s.Args.MustProper().Empty(); last = s.LastIn {
+			flag = last.Less(s.PopAs('n'), true)
 		}
 		s.Out = B(flag)
 	})).Store(">", NewFunc(1|Vararg, func(s *State) {
 		flag := true
-		for last := s.PopArgAs('n'); flag && !s.Args.ProEmpty(); last = s.LastIn {
-			flag = !last.Less(s.PopArgAs('n'), true)
+		for last := s.PopAs('n'); flag && !s.Args.MustProper().Empty(); last = s.LastIn {
+			flag = !last.Less(s.PopAs('n'), true)
 		}
 		s.Out = B(flag)
 	})).Store(">=", NewFunc(1|Vararg|Macro, func(s *State) {
 		s.Out = L(Empty, s.Caller.Y("not"), L(s.Args, s.Caller.Y("<")))
 	})).Store("not", NewFunc(1, func(s *State) {
-		s.Out = B(s.PopArg().IsFalse())
+		s.Out = B(s.Pop().IsFalse())
 	})).Store("+", NewFunc(1|Vararg, func(s *State) {
-		switch s.Out = s.PopArg(); s.Out.Type() {
+		switch s.Out = s.Pop(); s.Out.Type() {
 		case NUM:
-			for !s.Args.ProEmpty() {
-				s.Out = s.Out.Add(s.PopArgAs('n'))
+			for !s.Args.MustProper().Empty() {
+				s.Out = s.Out.Add(s.PopAs('n'))
 			}
 		case STR:
 			vs := s.Out.S()
-			for !s.Args.ProEmpty() {
-				vs += s.PopArgAs(STR).S()
+			for !s.Args.MustProper().Empty() {
+				vs += s.PopAs(STR).S()
 			}
 			s.Out = S(vs)
 		default:
 			panic(fmt.Errorf("can't apply 'add' on %v", s.Out))
 		}
 	})).Store("-", NewFunc(1|Vararg, func(s *State) {
-		a := s.PopArgAs('n')
-		if s.Args.ProEmpty() {
+		a := s.PopAs('n')
+		if s.Args.MustProper().Empty() {
 			af, ai, aIsInt := a.N()
 			if aIsInt {
 				s.Out = I(-ai)
@@ -169,40 +169,40 @@ func init() {
 			}
 			return
 		}
-		for !s.Args.ProEmpty() {
-			a = a.Sub(s.PopArgAs('n'))
+		for !s.Args.MustProper().Empty() {
+			a = a.Sub(s.PopAs('n'))
 		}
 		s.Out = a
 	})).Store("*", NewFunc(1|Vararg, func(s *State) {
-		s.Out = s.PopArgAs('n')
-		for !s.Args.ProEmpty() {
-			s.Out = s.Out.Mul(s.PopArgAs('n'))
+		s.Out = s.PopAs('n')
+		for !s.Args.MustProper().Empty() {
+			s.Out = s.Out.Mul(s.PopAs('n'))
 		}
 	})).Store("/", NewFunc(1|Vararg, func(s *State) {
-		s.Out = s.PopArgAs('n')
-		for !s.Args.ProEmpty() {
-			s.Out = s.Out.Div(s.PopArgAs('n'), false)
+		s.Out = s.PopAs('n')
+		for !s.Args.MustProper().Empty() {
+			s.Out = s.Out.Div(s.PopAs('n'), false)
 		}
 	})).Store("idiv", NewFunc(1|Vararg, func(s *State) {
-		s.Out = s.PopArgAs('n')
-		for !s.Args.ProEmpty() {
-			s.Out = s.Out.Div(s.PopArgAs('n'), true)
+		s.Out = s.PopAs('n')
+		for !s.Args.MustProper().Empty() {
+			s.Out = s.Out.Div(s.PopAs('n'), true)
 		}
 	})).Store("let", NewFunc(1|Vararg|Macro, func(s *State) {
 		var names, values []Value
-		s.PopArgAs(LIST).L().ProRange(func(pair Value) bool {
+		s.PopAs(LIST).L().Foreach(func(pair Value) bool {
 			s.assert(pair.Type() == LIST || s.panic("invalid binding list format: %v", pair))
 			p := pair.L()
-			s.assert(p.HasProNext() && p.Val().Type() == SYM && p.Val().S() != "" || s.panic("invalid binding list format: %v", pair))
-			names, values = append(names, p.Val()), append(values, p.Next().Val())
+			s.assert(p.HasProperCdr() && p.val.Type() == SYM && p.val.S() != "" || s.panic("invalid binding list format: %v", pair))
+			names, values = append(names, p.val), append(values, p.next.val)
 			return true
 		})
 		fn := L(Empty, s.Caller.Y("lambda"), L(Empty, names...), L(s.Args, s.Caller.Y("if"), Void, Void))
 		s.Out = L(L(Empty, values...).L(), fn)
 	})).Store("eval", NewFunc(1, func(s *State) {
-		s.Out = __exec(s.PopArg(), execState{local: s.Context, debug: s.Stack})
+		s.Out = __exec(s.Pop(), execState{local: s.Context, debug: s.Stack})
 	})).Store("parse", NewFunc(1, func(s *State) {
-		x := s.PopArgAs(STR).S()
+		x := s.PopAs(STR).S()
 		if _, err := os.Stat(x); err == nil {
 			buf, err := ioutil.ReadFile(x)
 			if err != nil {
@@ -214,33 +214,40 @@ func init() {
 			s.Out = ev2(s.Context.Parse("(parse)", x))
 		}
 	})).Store("set-car!", NewFunc(2, func(s *State) {
-		l := s.PopArgAs(LIST).L()
-		s.assert(!l.ProEmpty() || s.panic("set-car!: empty list"))
-		l.setVal(s.PopArg())
+		l := s.PopAs(LIST).L()
+		s.assert(!l.MustProper().Empty() || s.panic("set-car!: empty list"))
+		l.val = s.Pop()
 	})).Store("set-cdr!", NewFunc(2, func(s *State) {
-		s.Out = L(s.PopArgAs(LIST).L().SetCdr(s.PopArg()))
+		s.Out = L(s.PopAs(LIST).L().SetCdr(s.Pop()))
 	})).Store("list", NewFunc(Vararg, func(s *State) {
 		s.Out = L(s.Args)
 	})).Store("append", NewFunc(2, func(s *State) {
-		s.Out = L(s.PopArgAs(LIST).L().ProAppend(s.PopArgAs(LIST).L()))
+		b := InitListBuilder()
+		s.PopAs(LIST).L().Foreach(func(v Value) bool { b = b.Append(v); return true })
+		if b.last == nil {
+			s.Out = s.Pop()
+		} else {
+			b.last.SetCdr(s.Pop())
+			s.Out = b.Build()
+		}
 	})).Store("cons", NewFunc(2, func(s *State) {
-		s.Out = L(Cons(s.PopArg(), s.PopArg()))
+		s.Out = L(Cons(s.Pop(), s.Pop()))
 	})).Store("car", NewFunc(1, func(s *State) {
-		s.Out = s.PopArgAs(LIST).L().Car()
+		s.Out = s.PopAs(LIST).L().Car()
 	})).Store("cdr", NewFunc(1, func(s *State) {
-		s.Out = s.PopArgAs(LIST).L().Cdr()
+		s.Out = s.PopAs(LIST).L().Cdr()
 	})).Store("last", NewFunc(1, func(s *State) {
-		l := s.PopArgAs(LIST).L()
-		s.assert(!l.ProEmpty() || s.panic("last: empty list"))
-		s.Out = l.Last().Val()
+		l := s.PopAs(LIST).L()
+		s.assert(!l.MustProper().Empty() || s.panic("last: empty list"))
+		s.Out = l.Last().val
 	})).Store("init", NewFunc(1, func(s *State) {
-		l := s.PopArgAs(LIST).L()
-		s.assert(!l.ProEmpty() || s.panic("init: empty list"))
-		s.Out = L(l.ProTake(-1))
+		l := s.PopAs(LIST).L()
+		s.assert(!l.MustProper().Empty() || s.panic("init: empty list"))
+		s.Out = L(l.Take(-2))
 	})).Store("length", NewFunc(1, func(s *State) {
-		s.Out = I(int64(s.PopArgAs(LIST).L().ProLen()))
+		s.Out = I(int64(s.PopAs(LIST).L().Length()))
 	})).Store("pcall", NewFunc(2, func(s *State) {
-		rc, old := s.PopArg(), s.Stack.Frames
+		rc, old := s.Pop(), s.Stack.Frames
 		defer func() {
 			if r := recover(); r != nil {
 				if rc.Type() != FUNC {
@@ -251,32 +258,32 @@ func init() {
 				s.Stack.Frames = old
 			}
 		}()
-		s.Out = __exec(L(Empty, s.PopArg().Quote()), execState{debug: s.Stack, local: s.Context})
+		s.Out = __exec(L(Empty, s.Pop().Quote()), execState{debug: s.Stack, local: s.Context})
 	})).Store("apply", NewFunc(2, func(s *State) {
-		expr := InitListBuilder().Append(s.PopArgAs(FUNC).Quote())
-		s.PopArgAs(LIST).L().ProRange(func(v Value) bool { expr = expr.Append(v.Quote()); return true })
+		expr := InitListBuilder().Append(s.PopAs(FUNC).Quote())
+		s.PopAs(LIST).L().Foreach(func(v Value) bool { expr = expr.Append(v.Quote()); return true })
 		v, err := (*Context)(nil).Exec(expr.Build())
 		s.assert(err == nil || s.panic("apply panic: %v", err))
 		s.Out = v
 	})).
-		Store("raise", NewFunc(1, func(s *State) { panic(s.PopArg()) })).
-		Store("symbol->string", NewFunc(1, func(s *State) { s.Out = S(s.PopArgAs(SYM).S()) })).
-		Store("number->string", NewFunc(1, func(s *State) { s.Out = S(fmt.Sprint(s.PopArgAs('n').V())) })).
-		Store("string->symbol", NewFunc(1, func(s *State) { s.Out = Y(s.PopArgAs(STR).S(), 0) })).
-		Store("string->error", NewFunc(1, func(s *State) { s.Out = V(fmt.Errorf(s.PopArgAs(STR).S())) })).
-		Store("error?", NewFunc(1, func(s *State) { _, ok := s.PopArg().V().(error); s.Out = B(ok) })).
-		Store("null?", NewFunc(1, func(s *State) { s.Out = B(s.PopArg().Type() == LIST && s.LastIn.L().ProEmpty()) })).
-		Store("list?", NewFunc(1, func(s *State) { s.Out = B(s.PopArg().Type() == LIST && s.LastIn.L().IsProperList()) })).
-		Store("void?", NewFunc(1, func(s *State) { s.Out = B(s.PopArg() == Void) })).Store("pair?", _Ft(LIST)).Store("symbol?", _Ft(SYM)).Store("boolean?", _Ft('b')).Store("number?", _Ft('n')).Store("string?", _Ft(STR)).
+		Store("raise", NewFunc(1, func(s *State) { panic(s.Pop()) })).
+		Store("symbol->string", NewFunc(1, func(s *State) { s.Out = S(s.PopAs(SYM).S()) })).
+		Store("number->string", NewFunc(1, func(s *State) { s.Out = S(fmt.Sprint(s.PopAs('n').V())) })).
+		Store("string->symbol", NewFunc(1, func(s *State) { s.Out = Y(s.PopAs(STR).S(), 0) })).
+		Store("string->error", NewFunc(1, func(s *State) { s.Out = V(fmt.Errorf(s.PopAs(STR).S())) })).
+		Store("error?", NewFunc(1, func(s *State) { _, ok := s.Pop().V().(error); s.Out = B(ok) })).
+		Store("null?", NewFunc(1, func(s *State) { s.Out = B(s.Pop().Type() == LIST && s.LastIn.L().MustProper().Empty()) })).
+		Store("list?", NewFunc(1, func(s *State) { s.Out = B(s.Pop().Type() == LIST && s.LastIn.L().IsProperList()) })).
+		Store("void?", NewFunc(1, func(s *State) { s.Out = B(s.Pop() == Void) })).Store("pair?", _Ft(LIST)).Store("symbol?", _Ft(SYM)).Store("boolean?", _Ft('b')).Store("number?", _Ft('n')).Store("string?", _Ft(STR)).
 		Store("string->number", NewFunc(1, func(s *State) {
-			x := s.PopArgAs(STR).S()
+			x := s.PopAs(STR).S()
 			if v, err := strconv.ParseInt(x, 0, 64); err == nil {
 				s.Out = I(v)
 			} else {
 				s.Out = ev2(strconv.ParseFloat(x, 64))
 			}
 		})).
-		Store("stringify", NewFunc(1, func(s *State) { s.Out = S(s.PopArg().String()) }))
+		Store("stringify", NewFunc(1, func(s *State) { s.Out = S(s.Pop().String()) }))
 	Default.Store("letrec", NewFunc(1|Vararg|Macro, func(s *State) {
 		/* Unwrap to:
 		(let ((var1 ()) ... (varn ())                  // outer binds
@@ -288,14 +295,14 @@ func init() {
 		*/
 		let, setq := s.Caller.Y("let"), s.Caller.Y("set!")
 		var innersets, innerbinds, outerbinds []Value
-		s.PopArgAs(LIST).L().ProRange(func(v Value) bool {
+		s.PopAs(LIST).L().Foreach(func(v Value) bool {
 			s.assert(v.Type() == LIST || s.panic("invalid binding list format: %v", v))
 			b := v.L()
-			s.assert(b.HasProNext() && b.Val().Type() == SYM && b.Val().S() != "" || s.panic("invalid binding list format: %v", v))
-			tmpvar := Y(b.Val().S()+"tmp", 0)
-			innersets = append(innersets, L(Empty, setq, b.Val(), tmpvar))
-			innerbinds = append(innerbinds, L(Empty, tmpvar, b.Next().Val()))
-			outerbinds = append(outerbinds, L(Empty, b.Val(), Void))
+			s.assert(b.HasProperCdr() && b.val.Type() == SYM && b.val.S() != "" || s.panic("invalid binding list format: %v", v))
+			tmpvar := Y(b.val.S()+"tmp", 0)
+			innersets = append(innersets, L(Empty, setq, b.val, tmpvar))
+			innerbinds = append(innerbinds, L(Empty, tmpvar, b.next.val))
+			outerbinds = append(outerbinds, L(Empty, b.val, Void))
 			return true
 		})
 		inner := L(L(s.Args, innersets...).L(), let, L(Empty, innerbinds...))
@@ -309,13 +316,13 @@ func init() {
 				...
 					expr...
 		*/
-		let, binds := s.Caller.Y("let"), s.PopArgAs(LIST).L().ProSlice()
+		let, binds := s.Caller.Y("let"), s.PopAs(LIST).L().ToSlice()
 		last := L(s.Args, s.Caller.Y("begin"))
 		for i := len(binds) - 1; i >= 0; i-- {
 			bd := binds[i]
 			s.assert(bd.Type() == LIST || s.panic("invalid binding list format: %v", bd))
 			lst := bd.L()
-			s.assert(lst.HasProNext() && lst.Val().Type() == SYM && lst.Val().S() != "" || s.panic("invalid binding list format: %v", bd))
+			s.assert(lst.HasProperCdr() && lst.val.Type() == SYM && lst.val.S() != "" || s.panic("invalid binding list format: %v", bd))
 			last = L(Empty, let, L(Empty, bd), last)
 		}
 		s.Out = last
@@ -324,7 +331,7 @@ func init() {
 	}))
 
 	Default.Store("go->value", NewFunc(1, func(s *State) {
-		rv := reflect.ValueOf(s.PopArg().V())
+		rv := reflect.ValueOf(s.Pop().V())
 		switch rv.Kind() {
 		case reflect.Slice, reflect.Array:
 			l := InitListBuilder()
@@ -338,15 +345,15 @@ func init() {
 	}))
 	Default.Store("hash-new", NewFunc(Vararg, func(s *State) {
 		m := map[string]Value{}
-		for !s.Args.ProEmpty() {
-			m[s.PopArgAs(STR).S()] = s.PopArg()
+		for !s.Args.MustProper().Empty() {
+			m[s.PopAs(STR).S()] = s.Pop()
 		}
 		s.Out = V(m)
 	}))
-	Default.Store("hash-set!", NewFunc(3, func(s *State) { s.InMap()[s.PopArgAs(STR).S()] = s.PopArg() }))
-	Default.Store("hash-delete!", NewFunc(2, func(s *State) { delete(s.InMap(), s.PopArgAs(STR).S()) }))
-	Default.Store("hash-get", NewFunc(2, func(s *State) { s.Out = s.InMap()[s.PopArgAs(STR).S()] }))
-	Default.Store("hash-contains?", NewFunc(2, func(s *State) { _, ok := s.InMap()[s.PopArgAs(STR).S()]; s.Out = B(ok) }))
+	Default.Store("hash-set!", NewFunc(3, func(s *State) { s.InMap()[s.PopAs(STR).S()] = s.Pop() }))
+	Default.Store("hash-delete!", NewFunc(2, func(s *State) { delete(s.InMap(), s.PopAs(STR).S()) }))
+	Default.Store("hash-get", NewFunc(2, func(s *State) { s.Out = s.InMap()[s.PopAs(STR).S()] }))
+	Default.Store("hash-contains?", NewFunc(2, func(s *State) { _, ok := s.InMap()[s.PopAs(STR).S()]; s.Out = B(ok) }))
 	Default.Store("hash-keys", NewFunc(1, func(s *State) {
 		ret := InitListBuilder()
 		for i := range s.InMap() {
@@ -355,8 +362,8 @@ func init() {
 		s.Out = ret.Build()
 	}))
 
-	Default.Store("string-length", NewFunc(1, func(s *State) { s.Out = I(int64(len(s.PopArgAs(STR).S()))) }))
-	Default.Store("substring?", NewFunc(2, func(s *State) { s.Out = B(strings.Contains(s.PopArgAs(STR).S(), s.PopArgAs(STR).S())) }))
+	Default.Store("string-length", NewFunc(1, func(s *State) { s.Out = I(int64(len(s.PopAs(STR).S()))) }))
+	Default.Store("substring?", NewFunc(2, func(s *State) { s.Out = B(strings.Contains(s.PopAs(STR).S(), s.PopAs(STR).S())) }))
 	// 	Default.Install("skip", 2, func(s *State) {
 	// 		l := s.In(1, LIST).L()
 	// 		for i := 0; i < int(s.In(0, 'n').N()); i++ {
@@ -413,27 +420,27 @@ func init() {
 	// 		body = Append(body, s.Args[1:]...)
 	// 		s.Out = L(body...)
 	// 	})
-	Default.Store("vector-bytes", NewFunc(1, func(s *State) { s.Out = V(make([]byte, s.PopArgAs('n').I())) }))
-	Default.Store("vector-strings", NewFunc(1, func(s *State) { s.Out = V(make([]string, s.PopArgAs('n').I())) }))
-	Default.Store("vector-ints", NewFunc(1, func(s *State) { s.Out = V(make([]int, s.PopArgAs('n').I())) }))
-	Default.Store("vector-int64s", NewFunc(1, func(s *State) { s.Out = V(make([]int64, s.PopArgAs('n').I())) }))
-	Default.Store("vector-len", NewFunc(1, func(s *State) { s.Out = I(int64((reflect.ValueOf(s.PopArg().V()).Len()))) }))
-	Default.Store("vector-null?", NewFunc(1, func(s *State) { s.Out = B(reflect.ValueOf(s.PopArg().V()).Len() == 0) }))
+	Default.Store("vector-bytes", NewFunc(1, func(s *State) { s.Out = V(make([]byte, s.PopAs('n').I())) }))
+	Default.Store("vector-strings", NewFunc(1, func(s *State) { s.Out = V(make([]string, s.PopAs('n').I())) }))
+	Default.Store("vector-ints", NewFunc(1, func(s *State) { s.Out = V(make([]int, s.PopAs('n').I())) }))
+	Default.Store("vector-int64s", NewFunc(1, func(s *State) { s.Out = V(make([]int64, s.PopAs('n').I())) }))
+	Default.Store("vector-len", NewFunc(1, func(s *State) { s.Out = I(int64((reflect.ValueOf(s.Pop().V()).Len()))) }))
+	Default.Store("vector-null?", NewFunc(1, func(s *State) { s.Out = B(reflect.ValueOf(s.Pop().V()).Len() == 0) }))
 	Default.Store("vector-nth", NewFunc(2, func(s *State) {
-		rm := reflect.ValueOf(s.PopArg().V())
-		s.Out = V(rm.Index(int(s.PopArgAs('n').I())).Interface())
+		rm := reflect.ValueOf(s.Pop().V())
+		s.Out = V(rm.Index(int(s.PopAs('n').I())).Interface())
 	}))
 	Default.Store("vector-set-nth!", NewFunc(3, func(s *State) {
-		rm := reflect.ValueOf(s.PopArg().V())
-		rm.Index(int(s.PopArgAs('n').I())).Set(s.PopArg().TypedVal(rm.Type().Elem()))
+		rm := reflect.ValueOf(s.Pop().V())
+		rm.Index(int(s.PopAs('n').I())).Set(s.Pop().TypedVal(rm.Type().Elem()))
 	}))
 	Default.Store("vector-slice", NewFunc(3, func(s *State) {
-		rl := reflect.ValueOf(s.PopArg().V())
-		start, end := int(s.PopArgAs('n').I()), int(s.PopArgAs('n').I())
+		rl := reflect.ValueOf(s.Pop().V())
+		start, end := int(s.PopAs('n').I()), int(s.PopAs('n').I())
 		s.Out = V(rl.Slice(start, end).Interface())
 	}))
 	Default.Store("vector-concat", NewFunc(2, func(s *State) {
-		rv1, rv2 := reflect.ValueOf(s.PopArg().V()), reflect.ValueOf(s.PopArg().V())
+		rv1, rv2 := reflect.ValueOf(s.Pop().V()), reflect.ValueOf(s.Pop().V())
 		s.assert(rv1.Type() == rv2.Type() || s.panic("vector-concat: different type"))
 		r := reflect.MakeSlice(rv1.Type(), rv1.Len(), rv1.Len()+rv2.Len())
 		reflect.Copy(r, rv1)
@@ -441,7 +448,7 @@ func init() {
 		s.Out = V(r.Interface())
 	}))
 	Default.Store("vector-foreach", NewFunc(2, func(s *State) {
-		rl, fn := reflect.ValueOf(s.PopArg().V()), s.PopArgAs(FUNC)
+		rl, fn := reflect.ValueOf(s.Pop().V()), s.PopAs(FUNC)
 		for i := 0; i < rl.Len(); i++ {
 			flag, err := fn.F().Call(s.Stack, I(int64(i)), V(rl.Index(i).Interface()))
 			s.assert(err == nil || s.panic("invalid callback "))
@@ -451,8 +458,8 @@ func init() {
 		}
 	}))
 	Default.Store("map", NewFunc(2, func(s *State) {
-		fn, r, l, i := s.PopArgAs(FUNC), []Value{}, s.PopArgAs(LIST).L(), 0
-		l.ProRange(func(h Value) bool {
+		fn, r, l, i := s.PopAs(FUNC), []Value{}, s.PopAs(LIST).L(), 0
+		l.Foreach(func(h Value) bool {
 			v, err := fn.F().Call(s.Stack, h)
 			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
 			r = append(r, v)
@@ -462,9 +469,9 @@ func init() {
 		s.Out = L(Empty, r...)
 	}))
 	Default.Store("reduce", NewFunc(3, func(s *State) {
-		fn, left, l, i := s.PopArgAs(FUNC), s.PopArg(), s.PopArgAs(LIST).L(), 0
+		fn, left, l, i := s.PopAs(FUNC), s.Pop(), s.PopAs(LIST).L(), 0
 		var err error
-		l.ProRange(func(h Value) bool {
+		l.Foreach(func(h Value) bool {
 			left, err = fn.F().Call(s.Stack, left, h)
 			s.assert(err == nil || s.panic("reduce: error at element #%d: %v", i, err))
 			i++
@@ -473,7 +480,7 @@ func init() {
 		s.Out = left
 	}))
 	Default.Store("reduce-right", NewFunc(3, func(s *State) {
-		fn, right, rl := s.PopArgAs(FUNC), s.PopArg(), s.PopArgAs(LIST).L().ProSlice()
+		fn, right, rl := s.PopAs(FUNC), s.Pop(), s.PopAs(LIST).L().ToSlice()
 		var err error
 		for i := len(rl) - 1; i >= 0; i-- {
 			right, err = fn.F().Call(s.Stack, right, rl[i])
@@ -488,8 +495,8 @@ func init() {
 	// 	// 		}
 	// 	// 	})
 	Default.Store("struct-get", NewFunc(1|Vararg, func(s *State) {
-		rv := reflect.ValueOf(s.PopArg().V())
-		s.Args.ProRange(func(v Value) bool {
+		rv := reflect.ValueOf(s.Pop().V())
+		s.Args.Foreach(func(v Value) bool {
 			if rv.Kind() == reflect.Ptr {
 				rv = rv.Elem()
 			}
@@ -500,9 +507,9 @@ func init() {
 		s.Out = V(rv.Interface())
 	}))
 	Default.Store("struct-set!", NewFunc(2|Vararg, func(s *State) {
-		rv := reflect.ValueOf(s.PopArg().V())
-		v := s.PopArg()
-		s.Args.ProRange(func(v Value) bool {
+		rv := reflect.ValueOf(s.Pop().V())
+		v := s.Pop()
+		s.Args.Foreach(func(v Value) bool {
 			if rv.Kind() == reflect.Ptr {
 				rv = rv.Elem()
 			}
@@ -514,7 +521,7 @@ func init() {
 	}))
 	Default.Store("^", NewFunc(Vararg, func(s *State) {
 		p := bytes.Buffer{}
-		s.Args.ProRange(func(v Value) bool { p.WriteString(v.S()); return true })
+		s.Args.Foreach(func(v Value) bool { p.WriteString(v.S()); return true })
 		s.Out = S(p.String())
 	}))
 	Default.Store("display", NewFunc(Vararg, func(s *State) { fmt.Fprintln(DefaultStdout, L(s.Args).V().([]interface{})...) }))
@@ -527,15 +534,15 @@ func init() {
 	// 		s.Out = ValRec(regexp.MustCompile(s.In(0, 's').S()).FindAllStringSubmatch(s.In(1, 's').S(), int(s.In(2, 'n').N())))
 	// 	})
 	Default.Store("json", NewFunc(1, func(s *State) {
-		buf, err := json.MarshalIndent(s.PopArg().V(), "", "  ")
+		buf, err := json.MarshalIndent(s.Pop().V(), "", "  ")
 		s.Out = ev2(string(buf), err)
 	}))
 	Default.Store("json-c", NewFunc(1, func(s *State) {
-		buf, err := json.Marshal(s.PopArg().V())
+		buf, err := json.Marshal(s.Pop().V())
 		s.Out = ev2(string(buf), err)
 	}))
 	Default.Store("json-parse", NewFunc(1, func(s *State) {
-		text := strings.TrimSpace(s.PopArgAs(STR).S())
+		text := strings.TrimSpace(s.PopAs(STR).S())
 		if strings.HasPrefix(text, "{") {
 			m := map[string]interface{}{}
 			if err := json.Unmarshal([]byte(text), &m); err != nil {
@@ -560,7 +567,7 @@ func init() {
 		}
 	}))
 	Default.Store("setf!", NewFunc(2|Macro, func(s *State) {
-		a, v := s.PopArgAs(SYM).S(), s.PopArg()
+		a, v := s.PopAs(SYM).S(), s.Pop()
 		parts := strings.Split(a, ".")
 		s.assert(len(parts) > 1 || s.panic("too few fields to set"))
 		structname := parts[0]
@@ -571,7 +578,7 @@ func init() {
 		s.Out = setter.Build()
 	}))
 	Default.Store("getf", NewFunc(1|Macro, func(s *State) {
-		a := s.PopArgAs(SYM).S()
+		a := s.PopAs(SYM).S()
 		parts := strings.Split(a, ".")
 		s.assert(len(parts) > 1 || s.panic("too few fields to get"))
 		structname := parts[0]
@@ -654,8 +661,8 @@ func init() {
 		s.Out = do(expr)
 	}))
 
-	Default.Store("i64", NewFunc(1, func(s *State) { s.Out = s.PopArg() }))
-	Default.Store("u64", NewFunc(1, func(s *State) { *(*interface{})(unsafe.Pointer(&s.Out)) = uint64(s.PopArgAs(NUM).I()) }))
+	Default.Store("i64", NewFunc(1, func(s *State) { s.Out = s.Pop() }))
+	Default.Store("u64", NewFunc(1, func(s *State) { *(*interface{})(unsafe.Pointer(&s.Out)) = uint64(s.PopAs(NUM).I()) }))
 	// 	// SRFI-9
 	// 	type record struct {
 	// 		name   string
@@ -802,7 +809,7 @@ func init() {
 func (v Value) TypedVal(t reflect.Type) reflect.Value {
 	if v.Type() == LIST {
 		s := reflect.MakeSlice(t, 0, 0)
-		v.L().ProRange(func(v Value) bool { s = reflect.Append(s, v.TypedVal(t.Elem())); return true })
+		v.L().Foreach(func(v Value) bool { s = reflect.Append(s, v.TypedVal(t.Elem())); return true })
 		return s
 	}
 	vv := v.V()
@@ -873,14 +880,14 @@ func (v Value) Less(v2 Value, equal bool) bool {
 	return vf < v2f || (equal && vf == v2f)
 }
 func (s *State) In(t1 ValueType) Value {
-	return s.PopArgAs(t1)
+	return s.PopAs(t1)
 }
 func (s *State) In2(t1, t2 ValueType) (Value, Value) {
-	return s.PopArgAs(t1), s.PopArgAs(t2)
+	return s.PopAs(t1), s.PopAs(t2)
 }
 func (s *State) In3(t1, t2, t3 ValueType) (Value, Value, Value) {
-	return s.PopArgAs(t1), s.PopArgAs(t2), s.PopArgAs(t3)
+	return s.PopAs(t1), s.PopAs(t2), s.PopAs(t3)
 }
 func (s *State) In4(t1, t2, t3, t4 ValueType) (Value, Value, Value, Value) {
-	return s.PopArgAs(t1), s.PopArgAs(t2), s.PopArgAs(t3), s.PopArgAs(t4)
+	return s.PopAs(t1), s.PopAs(t2), s.PopAs(t3), s.PopAs(t4)
 }

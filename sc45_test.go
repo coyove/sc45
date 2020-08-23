@@ -43,18 +43,18 @@ func TestMarshal(t *testing.T) {
 		s.Out = V(d)
 	}))
 
-	v, _ := it.Parse("", "(pd)")
+	v, _ := it.Run("(pd)")
 	buf, err := v.Marshal()
 	panicerr(err)
 	panicerr(v.Unmarshal(buf))
-	if d := v.V().([]interface{})[3].(*dummy); d.V.V3 != 10 {
+	if d := v.V().(*dummy); d.V.V3 != 10 {
 		t.Fatal(d)
 	}
-	v, _ = it.Parse("", "(d)")
+	v, _ = it.Run("(d)")
 	buf, err = v.Marshal()
 	panicerr(err)
 	panicerr(v.Unmarshal(buf))
-	if d := v.V().([]interface{})[3].(dummy); d.V.V3 != 10 {
+	if d := v.V().(dummy); d.V.V3 != 10 {
 		t.Fatal(d)
 	}
 	v, _ = it.Parse("", "0x7fffffffffffffff")
@@ -115,7 +115,7 @@ func TestOne(t *testing.T) {
 	}
 	_ = assert
 	it.Store("assert", NewFunc(1, func(s *State) {
-		if s.PopArg().IsFalse() {
+		if s.Pop().IsFalse() {
 			panic(fmt.Errorf("assertion failed"))
 		}
 	}))
@@ -125,7 +125,7 @@ func TestOne(t *testing.T) {
 		s.Out = S(locs[len(locs)-1])
 	}))
 	it.Store("test/struct-gen", NewFunc(1, func(s *State) {
-		if s.PopArg().IsFalse() {
+		if s.Pop().IsFalse() {
 			s.Out = V((*dummy)(nil))
 			return
 		}
@@ -143,7 +143,7 @@ func TestOne(t *testing.T) {
 		return a
 	}))
 	it.Store("make/bytes", NewFunc(1, func(s *State) {
-		n := s.PopArg().V()
+		n := s.Pop().V()
 		l := make([]byte, n.(int64))
 		for i := 0; i < len(l); i++ {
 			l[i] = byte(i) + 1
@@ -151,7 +151,7 @@ func TestOne(t *testing.T) {
 		s.Out = V(l)
 	}))
 	it.Store("make/list", NewFunc(1, func(s *State) {
-		l := make([]Value, s.PopArgAs('n').I())
+		l := make([]Value, s.PopAs('n').I())
 		for i := 0; i < len(l); i++ {
 			l[i] = N(float64(i) + 1)
 		}
@@ -159,7 +159,7 @@ func TestOne(t *testing.T) {
 	}))
 	it.Store("range", NewFunc(2, func(s *State) {
 		m := s.InMap()
-		f := s.PopArgAs('f')
+		f := s.PopAs('f')
 		for k, v := range m {
 			err, _ := f.F().Call(s.Stack, S(k), v)
 			if err.IsFalse() {
@@ -169,8 +169,8 @@ func TestOne(t *testing.T) {
 		}
 	}))
 	it.Store("iff", NewFunc(2|Macro, func(s *State) {
-		s.PopArg()
-		s.Out = s.PopArg()
+		s.Pop()
+		s.Out = s.Pop()
 	}))
 
 	// assert("s/fib.scm")

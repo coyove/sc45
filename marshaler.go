@@ -40,8 +40,8 @@ func (v Value) Marshal() (buf []byte, err error) {
 		}
 	}()
 	p := &bytes.Buffer{}
-	if v.Type() == 'l' && !v.L().empty && v.L().Next() == Empty {
-		if v2 := v.L().Val(); v2.Type() == 'f' && v2.F().natToplevel {
+	if v.Type() == 'l' && !v.L().empty && v.L().next == Empty {
+		if v2 := v.L().val; v2.Type() == 'f' && v2.F().natToplevel {
 			v = v2.F().nat
 		}
 	}
@@ -96,13 +96,13 @@ func (v Value) marshal(p *bytes.Buffer) {
 		p.WriteByte('l')
 		vl := v.L()
 		for vl != nil && !vl.empty {
-			if vl.Next() == nil {
+			if vl.next == nil {
 				p.WriteByte(0)
 			} else {
 				p.WriteByte(1)
 			}
-			vl.Val().marshal(p)
-			vl = vl.Next()
+			vl.val.marshal(p)
+			vl = vl.next
 		}
 		p.WriteByte('L')
 	case BOOL:
@@ -171,7 +171,7 @@ func (v *Value) unmarshal(p interface {
 				vl = vl.Append(v2)
 			case 0:
 				v2.unmarshal(p)
-				vl.Cur.setVal(v2).empty = false
+				vl.Cur.val, vl.Cur.empty = v2, false
 				break LOOP
 			case 'L':
 				break LOOP

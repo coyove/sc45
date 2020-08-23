@@ -33,6 +33,9 @@
                        (2 "B"))))
   (assert (= counter 1)))
 
+(define for "for")
+
+((lambda ()
 (define for (lambda-syntax args
                             (match args ()
                                    [v start end #:step step body*]
@@ -52,9 +55,36 @@
                                                         (set! current (+ current 1))
                                                         (foo current end))))))
                                       (foo ,start ,end)))))
+
+(define macro-gen-9-counter 0)
+(define macro-gen-9-flag "")
+(define macro-gen-9 (lambda-syntax () 
+                                   (set! macro-gen-9-counter (+ 1 . (macro-gen-9-counter . ())))
+                                   `(begin
+                                      (set! macro-gen-9-flag
+                                        (+ macro-gen-9-flag (number->string ,macro-gen-9-counter)))
+                                      9)))
+
 (let ((text ""))
-  (for i 0 9
-       (for j 9 i #:step -1
+  (for i 0 (macro-gen-9)
+       (for j (macro-gen-9) i #:step -1
             (set! text (+ text (number->string i) "-" (number->string j) " ")))
        (set! text (+ text "\n")))
-  (display text)
+  (display text))
+
+(assert (= macro-gen-9-flag "12222222222"))
+
+(let ((l '(2 4 6))) 
+  (for i 2 6 #:step 2
+       (display l)
+       (assert (= (car l) i))
+       (set! l (cdr l))))
+
+(eval '(let ((l '(2 4 6))) 
+  (for i 2 6 #:step 2
+       (display l)
+       (assert (= (car l) i))
+       (set! l (cdr l))))) 
+))
+
+(assert (= for "for"))

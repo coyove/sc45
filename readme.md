@@ -1,4 +1,4 @@
-Sc45 is a relatively-small-basically-working scheme dialect in Go, its core consists of only one file (sc45.go) with no external dependencies.
+Sc45 is a relatively-small-basically-working scheme dialect in Go, its core consists of only one file (sc45.go) with 1k LOC.
 
 Sc45 serves one purpose: give your program an embedded REPL on-the-fly with minimal efforts:
 
@@ -35,4 +35,4 @@ Inside REPL:
 # Language details
 - `call/cc` is not supported, due to sc45's recursive evaluation intepreter, this is also impossible
 - Numbers are float64 + int64 internally, int64 will be promoted to float64 when needed
-- Macro definition syntax: `(define name (lambda-syntax (paramlist) body))`, macro is a legit function which takes expressions as inputs and outputs expressions, so it is more like Lisp macro
+- Macro definition syntax: `(define name (lambda-syntax (paramlist) body))`, macro is a legit function which takes expressions as inputs and outputs expressions, and it can also refer upper level symbols
