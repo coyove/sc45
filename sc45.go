@@ -460,6 +460,10 @@ func (ctx *Context) RunFile(deadline time.Time, path string) (result Value, err 
 	if err != nil {
 		return Void, err
 	}
+	{
+		buf, _ := c.Marshal()
+		c.Unmarshal(ctx, buf)
+	}
 	return ctx.Exec(deadline, c)
 }
 

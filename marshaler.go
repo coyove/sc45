@@ -40,16 +40,21 @@ func (v Value) Marshal() (buf []byte, err error) {
 		}
 	}()
 	p := &bytes.Buffer{}
-	if v.Type() == 'l' && !v.L().empty && v.L().next == Empty {
-		if v2 := v.L().val; v2.Type() == 'f' && v2.F().natToplevel {
-			v = v2.F().nat
+	if v.Type() == LIST {
+		if vl := v.L(); !vl.empty && vl.next == Empty && vl.val.Type() == FUNC && vl.val.F().natToplevel {
+			// ( (toplevel-lambda) )
+			f := vl.val.F()
+			p.WriteByte('T')
+			p.WriteByte('s') // write a STR value
+			writeString(p, f.source)
+			v = f.nat
 		}
 	}
 	v.marshal(p)
 	return p.Bytes(), nil
 }
 
-func (v *Value) Unmarshal(buf []byte) (err error) {
+func (v *Value) Unmarshal(ctx *Context, buf []byte) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err, _ = r.(error)
@@ -58,7 +63,7 @@ func (v *Value) Unmarshal(buf []byte) (err error) {
 			}
 		}
 	}()
-	v.unmarshal(bytes.NewReader(buf))
+	v.unmarshal(ctx, bytes.NewReader(buf))
 	return
 }
 
@@ -70,7 +75,6 @@ func writeString(p *bytes.Buffer, s string) {
 }
 
 func (v Value) marshal(p *bytes.Buffer) {
-
 	switch v.Type() {
 	case NUM:
 		vf, vi, vIsInt := v.N()
@@ -127,13 +131,19 @@ func (v Value) marshal(p *bytes.Buffer) {
 	}
 }
 
-func (v *Value) unmarshal(p interface {
+func (v *Value) unmarshal(ctx *Context, p interface {
 	io.ByteReader
 	io.Reader
 }) {
 	var tag byte
 	panicerr(binary.Read(p, binary.BigEndian, &tag))
 	switch tag {
+	case 'T':
+		var src, body Value
+		src.unmarshal(ctx, p)
+		panicif(src.Type() != STR, "invalid toplevel binary data")
+		body.unmarshal(ctx, p)
+		*v = L(Empty, F(&Func{nat: body, natCls: ctx, natToplevel: true, source: src.S()}))
 	case 'n':
 		var v2 float64
 		panicerr(binary.Read(p, binary.BigEndian, &v2))
@@ -146,10 +156,8 @@ func (v *Value) unmarshal(p interface {
 		line, err := binary.ReadVarint(p)
 		panicerr(err)
 		var v2 Value
-		v2.unmarshal(p)
-		if v2.Type() != 's' {
-			panic(fmt.Errorf("invalid symbol binary data"))
-		}
+		v2.unmarshal(ctx, p)
+		panicif(v2.Type() != STR, "invalid symbol binary data")
 		*v = Y(v2.S(), uint32(line))
 	case 's':
 		ln, err := binary.ReadVarint(p)
@@ -167,12 +175,11 @@ func (v *Value) unmarshal(p interface {
 			panicerr(binary.Read(p, binary.BigEndian, &tag))
 			switch tag {
 			case 1:
-				v2.unmarshal(p)
+				v2.unmarshal(ctx, p)
 				vl = vl.Append(v2)
 			case 0:
-				v2.unmarshal(p)
+				v2.unmarshal(ctx, p)
 				vl.Cur.val, vl.Cur.empty = v2, false
-				break LOOP
 			case 'L':
 				break LOOP
 			}

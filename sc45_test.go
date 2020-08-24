@@ -48,24 +48,18 @@ func TestMarshal(t *testing.T) {
 	v, _ := it.Run(Forever, "(pd)")
 	buf, err := v.Marshal()
 	panicerr(err)
-	panicerr(v.Unmarshal(buf))
+	panicerr(v.Unmarshal(it, buf))
 	if d := v.V().(*dummy); d.V.V3 != 10 {
 		t.Fatal(d)
 	}
 	v, _ = it.Run(Forever, "(d)")
 	buf, err = v.Marshal()
 	panicerr(err)
-	panicerr(v.Unmarshal(buf))
+	panicerr(v.Unmarshal(it, buf))
 	if d := v.V().(dummy); d.V.V3 != 10 {
 		t.Fatal(d)
 	}
-	v, _ = it.Parse("", "0x7fffffffffffffff")
-	buf, err = v.Marshal()
-	panicerr(err)
-	panicerr(v.Unmarshal(buf))
-	if d := v.V().([]interface{})[3].(int64); d != 0x7fffffffffffffff {
-		t.Fatal(d)
-	}
+
 }
 
 func TestNumber(t *testing.T) {
