@@ -157,7 +157,7 @@ func TestOne(t *testing.T) {
 		m := s.InMap()
 		f := s.PopAs('f')
 		for k, v := range m {
-			err, _ := f.F().CallOnStack(s.Stack, Forever, S(k), v)
+			err, _ := f.F().CallOnStack(s.Stack, Forever, L(Empty, S(k), v))
 			if err.IsFalse() {
 				s.Out = v
 				return

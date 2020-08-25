@@ -264,7 +264,7 @@ func init() {
 				if rc.Type() != FUNC {
 					s.Out = V(r)
 				} else {
-					s.Out = ev2(rc.F().CallOnStack(s.Stack, s.Deadline(), V(r)))
+					s.Out = ev2(rc.F().CallOnStack(s.Stack, s.Deadline(), L(Empty, V(r))))
 				}
 				s.Stack.Frames = old
 			}
@@ -286,14 +286,7 @@ func init() {
 		Store("null?", NewFunc(1, func(s *State) { s.Out = B(s.Pop().Type() == LIST && s.LastIn.L().MustProper().Empty()) })).
 		Store("list?", NewFunc(1, func(s *State) { s.Out = B(s.Pop().Type() == LIST && s.LastIn.L().IsProperList()) })).
 		Store("void?", NewFunc(1, func(s *State) { s.Out = B(s.Pop() == Void) })).Store("pair?", _Ft(LIST)).Store("symbol?", _Ft(SYM)).Store("boolean?", _Ft('b')).Store("number?", _Ft('n')).Store("string?", _Ft(STR)).
-		Store("string->number", NewFunc(1, func(s *State) {
-			x := s.PopAs(STR).S()
-			if v, err := strconv.ParseInt(x, 0, 64); err == nil {
-				s.Out = I(v)
-			} else {
-				s.Out = ev2(strconv.ParseFloat(x, 64))
-			}
-		})).
+		Store("string->number", NewFunc(1, func(s *State) { s.Out = ParseNumber(s.PopAs(STR).S()) })).
 		Store("stringify", NewFunc(1, func(s *State) { s.Out = S(s.Pop().String()) }))
 	Default.Store("letrec", NewFunc(1|Vararg|Macro, func(s *State) {
 		/* Unwrap to:
@@ -461,7 +454,7 @@ func init() {
 	Default.Store("vector-foreach", NewFunc(2, func(s *State) {
 		rl, fn := reflect.ValueOf(s.Pop().V()), s.PopAs(FUNC)
 		for i := 0; i < rl.Len(); i++ {
-			flag, err := fn.F().CallOnStack(s.Stack, s.Deadline(), I(int64(i)), V(rl.Index(i).Interface()))
+			flag, err := fn.F().CallOnStack(s.Stack, s.Deadline(), L(Empty, I(int64(i)), V(rl.Index(i).Interface())))
 			s.assert(err == nil || s.panic("invalid callback "))
 			if flag.IsFalse() {
 				break
@@ -471,7 +464,7 @@ func init() {
 	Default.Store("map", NewFunc(2, func(s *State) {
 		fn, r, l, i := s.PopAs(FUNC), []Value{}, s.PopAs(LIST).L(), 0
 		l.Foreach(func(h Value) bool {
-			v, err := fn.F().CallOnStack(s.Stack, s.Deadline(), h)
+			v, err := fn.F().CallOnStack(s.Stack, s.Deadline(), L(Empty, h))
 			s.assert(err == nil || s.panic("map: error at element #%d: %v", i, err))
 			r = append(r, v)
 			i++
@@ -483,7 +476,7 @@ func init() {
 		fn, left, l, i := s.PopAs(FUNC), s.Pop(), s.PopAs(LIST).L(), 0
 		var err error
 		l.Foreach(func(h Value) bool {
-			left, err = fn.F().CallOnStack(s.Stack, s.Deadline(), left, h)
+			left, err = fn.F().CallOnStack(s.Stack, s.Deadline(), L(Empty, left, h))
 			s.assert(err == nil || s.panic("reduce: error at element #%d: %v", i, err))
 			i++
 			return true
@@ -494,7 +487,7 @@ func init() {
 		fn, right, rl := s.PopAs(FUNC), s.Pop(), s.PopAs(LIST).L().ToSlice()
 		var err error
 		for i := len(rl) - 1; i >= 0; i-- {
-			right, err = fn.F().CallOnStack(s.Stack, s.Deadline(), right, rl[i])
+			right, err = fn.F().CallOnStack(s.Stack, s.Deadline(), L(Empty, right, rl[i]))
 			s.assert(err == nil || s.panic("reduce-right: error at element #%d: %v", i, err))
 		}
 		s.Out = right

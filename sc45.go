@@ -123,19 +123,20 @@ func (s *Stack) String() (p string) {
 	return strings.TrimSpace(p)
 }
 
-func (f *Func) Call(a ...Value) (result Value, err error) {
-	return f.CallOnStack(nil, Forever, a...)
-}
-func (f *Func) CallOnStack(dbg *Stack, deadline time.Time, a ...Value) (result Value, err error) {
-	expr := InitListBuilder().Append(F(f).Quote())
-	for i := range a {
-		expr = expr.Append(a[i].Quote())
+func (f *Func) Call(a ...interface{}) (result Value, err error) {
+	v := InitListBuilder()
+	for _, a := range a {
+		v = v.Append(V(a))
 	}
+	return f.CallOnStack(nil, Forever, v.Build())
+}
+func (f *Func) CallOnStack(dbg *Stack, deadline time.Time, args Value) (result Value, err error) {
+	expr := L(args.L(), F(f).Quote())
 	if dbg == nil {
 		dbg = &Stack{nextLoc: toplevelName}
 	}
 	defer debugCatch(dbg, &err)
-	return __exec(expr.Build(), execState{local: (*Context)(nil), debug: dbg, deadline: deadline.Unix()}), nil
+	return __exec(expr, execState{local: (*Context)(nil), debug: dbg, deadline: deadline.Unix()}), nil
 }
 func (f *Func) String() string {
 	if f.nat == Void {
@@ -355,8 +356,8 @@ TAIL_CALL:
 			switch moveCdr(&c); c.val.Type() {
 			case SYM:
 				x := c.val.S()
-				state.assert(state.local.M[x] == Void || state.panic("re-define %s", x)).
-					assert(moveCdr(&c) || state.panic("define: missing bound value"))
+				_, def := state.local.M[x]
+				state.assert(!def || state.panic("re-define %s", x)).assert(moveCdr(&c) || state.panic("define: missing bound value"))
 				state.local.set(x, __exec(c.val, state))
 			case LIST:
 				lst := c.val.L()
@@ -548,16 +549,10 @@ LOOP:
 			comp = comp.Append(L(Empty, Y(ifstr(sp, "unquote-splicing", "unquote"), 0), c))
 		default:
 			text := s.TokenText() + scanToDelim(s)
-			if v, err := strconv.ParseInt(text, 0, 64); err == nil || tok == scanner.Int {
-				if err, _ := err.(*strconv.NumError); err != nil && err.Err == strconv.ErrRange {
-					v, _ := strconv.ParseFloat(text, 64)
-					comp = comp.Append(N(v))
-				} else {
-					comp = comp.Append(I(v))
-				}
-			} else if v, err := strconv.ParseFloat(text, 64); err == nil || tok == scanner.Float {
-				comp = comp.Append(N(v))
+			if v := ParseNumber(text); v != Void {
+				comp = comp.Append(v)
 			} else {
+				ctx.assert(tok != scanner.Int && tok != scanner.Float || ctx.panic("invalid number: %v", text))
 				comp = comp.Append(Y(text, uint32(s.Pos().Line)))
 			}
 		}
@@ -585,7 +580,10 @@ func (e *assertable) assert(ok bool) *assertable {
 	}
 	return e
 }
-func (e *assertable) panic(t string, a ...interface{}) bool { e.err = fmt.Errorf(t, a...); return false }
+func (e *assertable) panic(t string, a ...interface{}) bool {
+	e.err = fmt.Errorf(t, a...)
+	return false
+}
 
 func ifstr(v bool, t, f string) string {
 	if v {
@@ -943,4 +941,12 @@ func (b ListBuilder) Append(v Value) ListBuilder {
 	b.Cur = b.Cur.next
 	b.Len++
 	return b
+}
+func ParseNumber(text string) Value {
+	if v, err := strconv.ParseInt(text, 0, 64); err == nil {
+		return I(v)
+	} else if v, err := strconv.ParseFloat(text, 64); err == nil {
+		return N(v)
+	}
+	return Void
 }
