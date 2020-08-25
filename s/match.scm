@@ -1,7 +1,8 @@
 (let ((foo (lambda args (match args ()
-	('(<= _ 2)) "str,<=2"
-	('(> _ 2)) (+ "str,>2" (number->string _))
-	(*) "whaat?")))) 
+	[('(<= _ 2)) "str,<=2"]
+	[('(> _ 2)) (+ "str,>2" (number->string _))]
+	[(*) "whaat?"]
+    )))) 
 
 		(assert (= (foo 1) "str,<=2"))
 		(assert (= (foo 3) "str,>23"))
@@ -9,16 +10,17 @@
 		(assert (= (foo) "whaat?")))
 
 
-(assert (match (append () '(1 2)) () (1 2) #t))
-(assert (= 3 (match '(letadd a (1 2)) (letadd) (letadd a (v1 v2)) (+ v1 v2))))
-(assert (= 24 (match '(letaddmul a (1 2 3) mul 4) (letaddmul mul) (letaddmul a (args*) mul s) (* s (reduce + 0 args)))))
-(assert (= -24 (match '(letsubmul a (1 2 3 4)) (letsubmul) (letsubmul a (args* mul)) (* mul (reduce - 0 args)))))
+(assert (= (match 1 () (1 "A")) "A"))
+(assert (match (append () '(1 2)) () [(1 2) #t]))
+(assert (= 3 (match '(letadd a (1 2)) (letadd) [(letadd a (v1 v2)) (+ v1 v2)] )))
+(assert (= 24 (match '(letaddmul a (1 2 3) mul 4) (letaddmul mul) [(letaddmul a (args*) mul s) (* s (reduce + 0 args))] )))
+(assert (= -24 (match '(letsubmul a (1 2 3 4)) (letsubmul) [(letsubmul a (args* mul)) (* mul (reduce - 0 args))] )))
 
 (define cond-inner (lambda-syntax (s . args)
                             (match args (else)
-                                   [(else b)] b
-                                   [(c b) rest*] `(if (= ,c ,s) ,b (cond-inner ,s ,@rest))
-                                   [] #f)))
+                                   ([(else b)] b)
+                                   ([(c b) rest*] `(if (= ,c ,s) ,b (cond-inner ,s ,@rest)))
+                                   ([] #f))))
 
 (define cond (lambda-syntax (s . args) `(let ((s ,s)) (cond-inner s ,@args))))
 
@@ -38,15 +40,15 @@
 ((lambda ()
 (define for (lambda-syntax args
                             (match args ()
-                                   [v start end #:step step body*]
+                                   [[v start end #:step step body*]
                                    `(letrec ((foo (lambda (current end step)
                                                     (if ([if (<= step 0) >= <=] current end)
                                                       (begin
                                                         (define ,v current)
                                                         ,@body
                                                         (foo (+ current step) end step))))))
-                                      (foo ,start ,end ,step))
-                                   [v start end body*]
+                                      (foo ,start ,end ,step))]
+                                   [[v start end body*]
                                    `(letrec ((foo (lambda (current end)
                                                     (if (<= current end)
                                                       (begin
@@ -54,7 +56,7 @@
                                                         ,@body
                                                         (set! current (+ current 1))
                                                         (foo current end))))))
-                                      (foo ,start ,end)))))
+                                      (foo ,start ,end))])))
 
 (define macro-gen-9-counter 0)
 (define macro-gen-9-flag "")

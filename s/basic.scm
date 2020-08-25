@@ -72,9 +72,9 @@
 
 (define or# (lambda-syntax args
                            (match args ()
-                                  () '#f
-                                  (a) a
-                                  (a b*) `(if ,a ,a ,(cons 'or# b))
+                                  [() '#f]
+                                  [(a) a]
+                                  [(a b*) `(if ,a ,a ,(cons 'or# b))]
                                   )
                            ))
 (assert (not (or#)))

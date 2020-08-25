@@ -111,7 +111,7 @@ func TestOne(t *testing.T) {
 	}
 	_ = assert
 	it.Store("assert", NewFunc(1, func(s *State) {
-		if s.Pop().IsFalse() {
+		if s.In().IsFalse() {
 			panic(fmt.Errorf("assertion failed"))
 		}
 	}))
@@ -121,7 +121,7 @@ func TestOne(t *testing.T) {
 		s.Out = S(locs[len(locs)-1])
 	}))
 	it.Store("test/struct-gen", NewFunc(1, func(s *State) {
-		if s.Pop().IsFalse() {
+		if s.In().IsFalse() {
 			s.Out = V((*dummy)(nil))
 			return
 		}
@@ -139,7 +139,7 @@ func TestOne(t *testing.T) {
 		return a
 	}))
 	it.Store("make/bytes", NewFunc(1, func(s *State) {
-		n := s.Pop().V()
+		n := s.In().V()
 		l := make([]byte, n.(int64))
 		for i := 0; i < len(l); i++ {
 			l[i] = byte(i) + 1
@@ -147,7 +147,7 @@ func TestOne(t *testing.T) {
 		s.Out = V(l)
 	}))
 	it.Store("make/list", NewFunc(1, func(s *State) {
-		l := make([]Value, s.PopAs('n').I())
+		l := make([]Value, s.I())
 		for i := 0; i < len(l); i++ {
 			l[i] = N(float64(i) + 1)
 		}
@@ -155,9 +155,9 @@ func TestOne(t *testing.T) {
 	}))
 	it.Store("range", NewFunc(2, func(s *State) {
 		m := s.InMap()
-		f := s.PopAs('f')
+		f := s.F()
 		for k, v := range m {
-			err, _ := f.F().CallOnStack(s.Stack, Forever, L(Empty, S(k), v))
+			err, _ := f.CallOnStack(s.Stack, Forever, L(Empty, S(k), v))
 			if err.IsFalse() {
 				s.Out = v
 				return
@@ -165,8 +165,8 @@ func TestOne(t *testing.T) {
 		}
 	}))
 	it.Store("iff", NewFunc(2|Macro, func(s *State) {
-		s.Pop()
-		s.Out = s.Pop()
+		s.In()
+		s.Out = s.In()
 	}))
 
 	// assert("s/fib.scm")

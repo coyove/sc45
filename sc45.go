@@ -26,7 +26,7 @@ var (
 	int64Marker           = unsafe.Pointer(new(int64))
 )
 
-const STR, SYM, NUM, BOOL, LIST, INTF, FUNC, VOID, ANY ValueType = 's', 'y', 'n', 'b', 'l', 'i', 'f', 'v', 'a'
+const STR, SYM, NUM, BOOL, LIST, INTF, FUNC, VOID ValueType = 's', 'y', 'n', 'b', 'l', 'i', 'f', 'v'
 const toplevelName = "(toplevel)"
 
 type (
@@ -88,8 +88,8 @@ type (
 
 func New() *Context { return Default.Copy() }
 
-func NewFunc(minArgsFlag int, f func(*State)) Value {
-	return F(&Func{fun: f, funMinArgNum: minArgsFlag & 0xffff, vararg: minArgsFlag&Vararg != 0, m: minArgsFlag&Macro != 0, source: "(builtin)"})
+func NewFunc(argFlag int, f func(*State)) Value {
+	return F(&Func{fun: f, funMinArgNum: argFlag & 0xffff, vararg: argFlag&Vararg != 0, m: argFlag&Macro != 0, source: "(builtin)"})
 }
 
 func (s *Stack) popAndReturn(v Value) Value {
@@ -147,21 +147,24 @@ func (f *Func) String() string {
 	return ifstr(f.m, "(lambda-syntax (", "(lambda (") + strings.Join(f.natArgNames, " ") + ifstr(f.vararg, " . "+f.name, "") + ") " + f.nat.String() + ")"
 }
 
-// Pop pops an argument
-func (s *State) Pop() Value {
+// In pops an argument
+func (s *State) In() Value {
 	s.assert(!s.Args.MustProper().Empty() || s.panic("too few arguments, expect at least %d", s.argIdx+1))
 	v := s.Args.val
 	s.argIdx, s.LastIn = s.argIdx+1, v
 	s.Args = s.Args.next
 	return v
 }
-func (s *State) PopAs(t ValueType) Value {
-	v := s.Pop()
-	s.assert(t == ANY || v.Type() == t || s.panic("invalid argument #%d, expect %s, got %v", s.argIdx, Types[t], v))
-	return v
-}
-func (s *State) Deadline() time.Time    { return time.Unix(s.deadline, 0) }
-func (s *State) Timeout() time.Duration { return s.Deadline().Sub(time.Now()) }
+func (s *State) Nv() Value                 { return s.In().expect(s, NUM) }
+func (s *State) N() (float64, int64, bool) { return s.In().expect(s, NUM).N() }
+func (s *State) I() int64                  { return s.In().expect(s, NUM).I() }
+func (s *State) S() string                 { return s.In().expect(s, STR).S() }
+func (s *State) Y() string                 { return s.In().expect(s, SYM).S() }
+func (s *State) L() *Pair                  { return s.In().expect(s, LIST).L() }
+func (s *State) B() bool                   { return s.In().expect(s, BOOL).B() }
+func (s *State) F() *Func                  { return s.In().expect(s, FUNC).F() }
+func (s *State) V() interface{}            { return s.In().V() }
+func (s *State) Deadline() time.Time       { return time.Unix(s.deadline, 0) }
 
 func (ctx *Context) find(k string) (Value, *Context) {
 	for ; ctx != nil; ctx = ctx.parent {
@@ -311,23 +314,27 @@ TAIL_CALL:
 		case "match":
 			state.assert(moveCdr(&c) || state.panic("match: missing source"))
 			source := __exec(c.val, state)
-			state.assert(source.Type() == LIST || state.panic("match: expect source to be list"))
 			state.assert(moveCdr(&c) && c.val.Type() == LIST || state.panic("match: missing symbol list"))
 			symbols := c.val.L().ToSlice()
 		MATCH_NEXT:
-			state.assert(moveCdr(&c) && c.val.Type() == LIST || state.panic("match: missing pattern"))
-			pattern := c.val.L()
-			state.assert(moveCdr(&c) || state.panic("match: missing body"))
-			var symbolmap map[string]struct{}
-			if len(symbols) > 0 {
-				symbolmap = map[string]struct{}{}
-				for _, s := range symbols {
-					symbolmap[s.S()] = struct{}{}
-				}
-			}
+			// ( (pattern subject) ... )
+			state.assert(moveCdr(&c) && c.val.Type() == LIST && c.val.L().HasProperCdr() || state.panic("match: invalid pattern"))
+			pattern, subject, matched := c.val.L().val, c.val.L().next.val, false
 			m := &Context{parent: state.local, M: map[string]Value{}}
-			if source.L().match(state, pattern, false, symbolmap, m.M) {
-				return state.debug.popAndReturn(__exec(c.val, execState{debug: state.debug, local: m, deadline: state.deadline}))
+			if pattern.Type() == LIST && source.Type() == LIST {
+				var symbolmap map[string]struct{}
+				if len(symbols) > 0 {
+					symbolmap = map[string]struct{}{}
+					for _, s := range symbols {
+						symbolmap[s.S()] = struct{}{}
+					}
+				}
+				matched = source.L().match(state, pattern.L(), false, symbolmap, m.M)
+			} else {
+				matched = source.Equals(pattern)
+			}
+			if matched {
+				return state.debug.popAndReturn(__exec(subject, execState{debug: state.debug, local: m, deadline: state.deadline}))
 			}
 			if c.HasProperCdr() {
 				goto MATCH_NEXT
@@ -339,8 +346,7 @@ TAIL_CALL:
 		case "quasiquote":
 			state.assert(moveCdr(&c) || state.panic("invalid quasiquote syntax"))
 			v, p := __execQuasi(c.val, state)
-			_ = p != nil && v.of(L(p)) || v.of(v)
-			return state.debug.popAndReturn(v)
+			return state.debug.popAndReturn(v.nop(p != nil && v.of(L(p)) || v.of(v)))
 		case "unquote", "unquote-splicing":
 			panic(fmt.Errorf("unquote outside quasiquote"))
 		case "set!":
@@ -361,8 +367,8 @@ TAIL_CALL:
 				state.local.set(x, __exec(c.val, state))
 			case LIST:
 				lst := c.val.L()
-				state.assert(!lst.MustProper().Empty() || state.panic("define: missing function name")).
-					assert(moveCdr(&c) || state.panic("define: missing bound value"))
+				state.assert(!lst.MustProper().Empty() || state.panic("define: missing function name"))
+				state.assert(moveCdr(&c) || state.panic("define: missing bound value"))
 				s := L(Empty, head.Y("define"), lst.val, L(c, head.Y("lambda"), L(lst.next)))
 				__exec(s, state)
 			default:
@@ -380,15 +386,14 @@ TAIL_CALL:
 		args := InitListBuilder().Append(F(cc))
 		c.next.Foreach(func(v Value) bool { args = args.Append(v.Quote()); return true })
 		state.macroMode = true
-		reconstruct := __exec(args.Build(), state)
+		u := __exec(args.Build(), state)
 		if head.Type() == SYM {
 			// The macro is bounded with a symbol and will not be altered ever, so we can replace the expression with the unwrapped one
 			// The opposite case is like: ((if cond macro1 macro2) a b c ...), we have to unwrap every time
-			_ = reconstruct.Type() == LIST && reconstruct.of(reconstruct) || reconstruct.of(L(Empty, head.Y("if"), Void, Void, reconstruct))
-			*c = *reconstruct.L()
+			*c = *u.nop(u.Type() == LIST && u.of(u) || u.of(L(Empty, head.Y("if"), Void, Void, u))).L()
 		}
 		state.macroMode = false
-		return state.debug.popAndReturn(__exec(reconstruct, state))
+		return state.debug.popAndReturn(__exec(u, state))
 	}
 
 	state.macroMode = false // clear the macro flag because a macro may call other macros as well, so more unwrappings may take place
@@ -412,8 +417,7 @@ TAIL_CALL:
 
 	args := InitListBuilder()
 	c.next.Foreach(func(v Value) bool { args = args.Append(__exec(v, state)); return true })
-	state.assert(args.Len == cc.funMinArgNum || (cc.vararg && args.Len >= cc.funMinArgNum) ||
-		state.panic("call: expect "+ifstr(cc.vararg, "at least ", "")+strconv.Itoa(cc.funMinArgNum)+" arguments"))
+	state.assert(args.Len == cc.funMinArgNum || (cc.vararg && args.Len >= cc.funMinArgNum) || state.panic("call: expect %d arguments", cc.funMinArgNum))
 
 	state.debug.nextLoc = (cc.source)
 	s := State{Context: state.local, Caller: head, Stack: state.debug, Args: args.head, deadline: state.deadline}
@@ -621,12 +625,6 @@ func V(v interface{}) (va Value) {
 	*va.A() = v
 	return va
 }
-func B(v bool) Value {
-	if v {
-		return Value{val: 2}
-	}
-	return Value{val: 1}
-}
 func L(lst *Pair, l ...Value) Value {
 	for i := len(l) - 1; i >= 0; i-- {
 		n := &Pair{val: l[i], next: lst}
@@ -638,21 +636,19 @@ func L(lst *Pair, l ...Value) Value {
 // Float64 available range in uint64: 0x0 - 0x7FF00000`00000001, 0x80000000`00000000 - 0xFFF00000`00000000
 // When bit-inverted, the range is: 0x800FFFFF`FFFFFFFE - 0xFFFFFFFF`FFFFFFFF, 0x000FFFFF`FFFFFFFF - 0x7FFFFFFF`FFFFFFFF
 func N(v float64) (n Value) {
-	_ = math.IsNaN(v) && n.of(Value{val: 0x800FFFFFFFFFFFFE} /* ^7FF0000000000001 */) || n.of(Value{val: ^math.Float64bits(v)})
-	return
+	return n.nop(math.IsNaN(v) && n.of(Value{val: 0x800FFFFFFFFFFFFE} /*7FF0...01*/) || n.of(Value{val: ^math.Float64bits(v)}))
 }
 func I(v int64) (i Value) {
-	_ = int64(float64(v)) == v && i.of(N(float64(v))) || i.of(Value{val: uint64(v), ptr: int64Marker})
-	return
+	return i.nop(int64(float64(v)) == v && i.of(N(float64(v))) || i.of(Value{val: uint64(v), ptr: int64Marker}))
 }
+func B(v bool) (b Value)          { return b.nop(v && b.of(Value{val: 2}) || b.of(Value{val: 1})) }
 func Y(v string, ln uint32) Value { return Value{ptr: unsafe.Pointer(&v), val: 1<<51 | uint64(ln)} }
 func S(v string) (vs Value)       { return Value{val: uint64(STR), ptr: unsafe.Pointer(&v)} }
 func F(f *Func) Value             { return Value{val: uint64(FUNC), ptr: unsafe.Pointer(f)} }
 
 func (v Value) Quote() (q Value) {
 	t := v.Type()
-	_ = (t == LIST || t == SYM) && q.of(L(Empty, Quote, v)) || q.of(v)
-	return
+	return q.nop((t == LIST || t == SYM) && q.of(L(Empty, Quote, v)) || q.of(v))
 }
 func (v Value) Type() ValueType {
 	switch v.val {
@@ -760,6 +756,10 @@ func (v Value) I() int64 {
 	}
 	return int64(math.Float64frombits(^v.val))
 }
+func (v Value) expect(s *State, t ValueType) Value {
+	s.assert(v.Type() == t || s.panic("invalid argument #%d, expect %s, got %v", s.argIdx, Types[t], v))
+	return v
+}
 func (v *Value) A() *interface{} {
 	return (*interface{})(unsafe.Pointer((uintptr(unsafe.Pointer(v)) + (64-strconv.IntSize)/8)))
 }
@@ -772,6 +772,7 @@ func (v Value) LineInfo() uint32    { return uint32(v.val) }
 func (v Value) String() string      { return v.stringify(false) }
 func (v Value) GoString() string    { return fmt.Sprintf("{val:%016x ptr:%016x}", v.val, v.ptr) }
 func (v Value) IsFalse() bool       { return v.val < 2 } // 0: void, 1: false
+func (v *Value) nop(b bool) Value   { return *v }
 func (v *Value) of(v2 Value) bool   { *v = v2; return true }
 
 func (p *Pair) Car() Value           { panicif(p.Empty(), "car: empty list"); return p.val }
@@ -830,7 +831,7 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 		if w := isWildcard(sym); w != "" {
 			if pattern.HasProperCdr() {
 				n := p.Length() - pattern.next.Length()
-				if n < 0 { // the remaining symbols in 'p' is less than 'pattern'
+				if n < 0 { // the remaining symbols in 'p' is less than 'pattern', so we are sure the match will fail
 					return false
 				}
 				// The first n symbols will go into 'ww'
@@ -911,8 +912,7 @@ func (p *Pair) IsProperList() bool {
 func (p *Pair) Cdr() (v Value) {
 	p = p.next
 	panicif(p == nil, "cdr: empty list")
-	_ = p.Improper() && v.of(p.val) || v.of(L(p))
-	return
+	return v.nop(p.Improper() && v.of(p.val) || v.of(L(p)))
 }
 func (p *Pair) SetCdr(v Value) *Pair {
 	panicif(p.Empty(), "cdr: empty list")

@@ -26,7 +26,7 @@
 
 (display "misc")
 (define flag #f)
-(assert (match (StringSplit "aabbccbbd" "bb") () ("aa" "cc" "d") (begin (set! flag #t) #t)))
+(assert (match (StringSplit "aabbccbbd" "bb") () [("aa" "cc" "d") (begin (set! flag #t) #t)]))
 (assert flag)
 
 (let ()
