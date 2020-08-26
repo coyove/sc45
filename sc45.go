@@ -691,7 +691,7 @@ func (v Value) stringify(goStyle bool) string {
 	case BOOL:
 		return ifstr(v.B(), ifstr(goStyle, "true", "#t"), ifstr(goStyle, "false", "#f"))
 	case INTF:
-		return "#" + fmt.Sprint(v.A())
+		return "#" + fmt.Sprint(*v.A())
 	case FUNC:
 		return v.F().String()
 	default:
@@ -730,7 +730,7 @@ func (v Value) Equals(v2 Value) bool {
 		case SYM, STR:
 			return v.S() == v2.S()
 		case INTF:
-			return v.A() == v2.A()
+			return *v.A() == *v2.A()
 		}
 	}
 	return false

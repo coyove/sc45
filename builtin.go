@@ -341,22 +341,7 @@ func init() {
 	}))
 	Default.Store("define-modules", NewFunc(1|Vararg, func(s *State) {
 	}))
-	Default.Store("go->value", NewFunc(1, func(s *State) {
-		var vrec func(v interface{}) Value
-		vrec = func(v interface{}) Value {
-			rv := reflect.ValueOf(v)
-			switch rv.Kind() {
-			case reflect.Slice, reflect.Array:
-				l := InitListBuilder()
-				for i := 0; i < rv.Len(); i++ {
-					l = l.Append(vrec(rv.Index(i).Interface()))
-				}
-				return l.Build()
-			}
-			return V(v)
-		}
-		s.Out = vrec(s.In().V())
-	}))
+	Default.Store("go->value", NewFunc(1, func(s *State) { s.Out = Vrec(s.In().V()) }))
 	Default.Store("hash-new", NewFunc(Vararg, func(s *State) {
 		m := map[string]Value{}
 		for !s.Args.MustProper().Empty() {
@@ -597,6 +582,20 @@ func init() {
 		}
 		s.Out = do(expr)
 	}))
+	Default.Store("sleep-milli", NewFunc(1, func(s *State) {
+		d, t := s.Deadline(), time.Duration(s.I())*time.Millisecond
+		if time.Now().Add(t).Before(d) {
+			time.Sleep(t)
+		}
+	}))
+	Default.Store("env", NewFunc(0, func(s *State) {
+		l := InitListBuilder()
+		for _, kv := range os.Environ() {
+			p := strings.SplitN(kv, "=", 2)
+			l = l.Append(L(Empty, S(p[0]), S(p[1])))
+		}
+		s.Out = l.Build()
+	}))
 
 	Default.Store("i64", NewFunc(1, func(s *State) { s.Out = s.In() }))
 	Default.Store("u64", NewFunc(1, func(s *State) { *s.Out.A() = uint64(s.I()) }))
@@ -780,4 +779,16 @@ func (v Value) Less(v2 Value, equal bool) bool {
 		return vi < v2i || (equal && vi == v2i)
 	}
 	return vf < v2f || (equal && vf == v2f)
+}
+func Vrec(v interface{}) Value {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array:
+		l := InitListBuilder()
+		for i := 0; i < rv.Len(); i++ {
+			l = l.Append(Vrec(rv.Index(i).Interface()))
+		}
+		return l.Build()
+	}
+	return V(v)
 }

@@ -4,16 +4,20 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
+type respStruct struct {
+	Result string
+	Stdout string
+}
+
 func (ctx *Context) InjectDebugPProfREPL(title string) {
-	type respStruct struct {
-		Result string
-		Stdout string
-	}
 
 	ww := &bytes.Buffer{}
 	DefaultStdout = ww
@@ -93,12 +97,13 @@ function post(url, data, cb) {
 
 		cmd := r.FormValue("cmd")
 		timeout, _ := strconv.ParseInt(r.FormValue("timeout"), 10, 64)
-		if timeout == 0 {
-			timeout = 60
+		deadline := Forever
+		if timeout != 0 {
+			deadline = time.Now().Add(time.Duration(timeout) * time.Second)
 		}
 
 		ww.Reset()
-		v, err := ctx.Run(time.Now().Add(time.Duration(timeout)*time.Second), cmd)
+		v, err := ctx.Run(deadline, cmd)
 
 		var resp = respStruct{
 			Stdout: ww.String(),
@@ -112,4 +117,22 @@ function post(url, data, cb) {
 		w.Header().Add("Content-Type", "application/json")
 		w.Write([]byte(p))
 	})
+}
+
+func CallHTTPRepl(c *http.Client, addr, expr string) (result, stdout string, err error) {
+	addr = strings.TrimPrefix(addr, "http://")
+	addr = strings.TrimSuffix(addr, "/")
+
+	resp, err := c.Post("http://"+addr+"/debug/pprof/repl",
+		"application/x-www-form-urlencoded",
+		strings.NewReader(`cmd=`+url.QueryEscape(expr)))
+	if err != nil {
+		return "", "", err
+	}
+
+	p, _ := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	s := respStruct{}
+	json.Unmarshal(p, &s)
+	return s.Result, s.Stdout, nil
 }
