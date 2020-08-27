@@ -110,8 +110,8 @@ func TestOne(t *testing.T) {
 		log.Println(v, "===>", r)
 	}
 	_ = assert
-	it.Store("assert", NewFunc(1, func(s *State) {
-		if s.In().IsFalse() {
+	it.Store("assert", NewGoFunc(func(c Value) {
+		if c.IsFalse() {
 			panic(fmt.Errorf("assertion failed"))
 		}
 	}))

@@ -691,7 +691,7 @@ func (v Value) stringify(goStyle bool) string {
 	case BOOL:
 		return ifstr(v.B(), ifstr(goStyle, "true", "#t"), ifstr(goStyle, "false", "#f"))
 	case INTF:
-		return "#" + fmt.Sprint(*v.A())
+		return "#" + fmt.Sprintf("%#v", *v.A())
 	case FUNC:
 		return v.F().String()
 	default:

@@ -21,6 +21,7 @@ import (
 var (
 	DefaultStdout io.Writer = os.Stdout
 	stateType               = reflect.TypeOf(&State{})
+	valueType               = reflect.TypeOf(Value{})
 	fastNow       int64     = time.Now().Unix()
 )
 
@@ -710,6 +711,9 @@ func init() {
 }
 
 func (v Value) TypedVal(t reflect.Type) reflect.Value {
+	if t == valueType {
+		return reflect.ValueOf(v)
+	}
 	if v.Type() == LIST {
 		s := reflect.MakeSlice(t, 0, 0)
 		v.L().Foreach(func(v Value) bool { s = reflect.Append(s, v.TypedVal(t.Elem())); return true })
