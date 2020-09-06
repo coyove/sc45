@@ -20,10 +20,14 @@ import (
 
 var (
 	DefaultStdout io.Writer = os.Stdout
-	stateType               = reflect.TypeOf(&State{})
 	valueType               = reflect.TypeOf(Value{})
 	fastNow       int64     = time.Now().Unix()
+	Vararg, Macro           = 1 << 30, 1 << 29
 )
+
+func NewFunc(a int, f func(*State)) Value {
+	return F(&Func{F: f, MinArgNum: a & 0xffff, Vararg: a&Vararg != 0, Macro: a&Macro != 0, Source: "(sys)"})
+}
 
 func (s *State) InMap() map[string]Value {
 	v, _ := s.In().V().(map[string]Value)
@@ -47,52 +51,6 @@ func (ctx *Context) String() string {
 		p.WriteString(ctx.parent.String())
 	}
 	return p.String()
-}
-
-func NewGoFunc(fn interface{}) Value {
-	var ctx assertable
-	rf, rt := reflect.ValueOf(fn), reflect.TypeOf(fn)
-	ctx.assert(rf.Kind() == reflect.Func || ctx.panic("not func"))
-	ctx.assert(rt.NumOut() <= 2 || ctx.panic("too many return values, expect 0, 1 or 2"))
-	ctx.assert(rt.NumOut() < 2 || (rt.Out(1).Implements(reflect.TypeOf((*error)(nil)).Elem())) || ctx.panic("require func (...) (*, error)"))
-	count := rt.NumIn()
-	if rt.IsVariadic() {
-		count = Vararg | (count - 1)
-	}
-	if count > 0 && rt.In(0) == stateType {
-		count--
-	}
-	return NewFunc(count, func(s *State) {
-		ins := make([]reflect.Value, 0, rt.NumIn())
-		if rt.IsVariadic() {
-			for i := 0; i < rt.NumIn()-1; i++ {
-				if t := rt.In(i); i == 0 && t == stateType {
-					ins = append(ins, reflect.ValueOf(s))
-				} else {
-					ins = append(ins, s.In().TypedVal(t))
-				}
-			}
-			for !s.Args.MustProper().Empty() {
-				ins = append(ins, s.In().TypedVal(rt.In(rt.NumIn()-1).Elem()))
-			}
-		} else {
-			for i := 0; i < rt.NumIn(); i++ {
-				if t := rt.In(i); i == 0 && t == stateType {
-					ins = append(ins, reflect.ValueOf(s))
-				} else {
-					ins = append(ins, s.In().TypedVal(t))
-				}
-			}
-		}
-		outs := rf.Call(ins)
-		switch rt.NumOut() {
-		case 1:
-			s.Out = V(outs[0].Interface())
-		case 2:
-			err, _ := outs[1].Interface().(error)
-			_ = err != nil && s.Out.of(V(err)) || s.Out.of(V(outs[0].Interface()))
-		}
-	})
 }
 
 func init() {

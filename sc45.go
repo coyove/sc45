@@ -19,15 +19,13 @@ import (
 
 var (
 	Default, Now, Forever = &Context{}, func() int64 { return time.Now().Unix() }, time.Unix(1<<32, 0)
-	Vararg, Macro         = 1 << 30, 1 << 29
-	Void, Quote           = Value{}, Y("quote", 0)
-	Empty                 = &Pair{empty: true}
+	Void, Quote, Empty    = Value{}, Y("quote", 0), &Pair{empty: true}
 	Types                 = map[ValueType]string{STR: "string", SYM: "symbol", NUM: "number", LIST: "list", INTF: "interface", FUNC: "function", VOID: "void", BOOL: "boolean"}
 	int64Marker           = unsafe.Pointer(new(int64))
+	stateType, errorType  = reflect.TypeOf(&State{}), reflect.TypeOf((*error)(nil)).Elem()
 )
 
 const STR, SYM, NUM, BOOL, LIST, INTF, FUNC, VOID ValueType = 's', 'y', 'n', 'b', 'l', 'i', 'f', 'v'
-const toplevelName = "(toplevel)"
 
 type (
 	ValueType byte
@@ -41,14 +39,14 @@ type (
 		empty bool
 	}
 	Func struct {
-		source, name string       // filename inherited from the toplevel lambda, name => native: variadic argument name, builtin: last assigned name
-		vararg, m    bool         // is macro/variadic function
-		natToplevel  bool         // native: toplevel
-		natArgNames  []string     // native: arguments binding list
-		natCls       *Context     // native: closure
-		nat          Value        // native
-		funMinArgNum int          // builtin: minimal arguments required
-		fun          func(*State) // builtin
+		Source, name  string       // filename inherited from the toplevel lambda, name => native: variadic argument name, builtin: last assigned name
+		Vararg, Macro bool         // is macro/variadic function
+		natToplevel   bool         // native: toplevel
+		natArgNames   []string     // native: arguments binding list
+		natCls        *Context     // native: closure
+		nat           Value        // native
+		MinArgNum     int          // builtin: minimal arguments required
+		F             func(*State) // builtin
 	}
 	State struct {
 		*Context
@@ -88,10 +86,6 @@ type (
 
 func New() *Context { return Default.Copy() }
 
-func NewFunc(argFlag int, f func(*State)) Value {
-	return F(&Func{fun: f, funMinArgNum: argFlag & 0xffff, vararg: argFlag&Vararg != 0, m: argFlag&Macro != 0, source: "(builtin)"})
-}
-
 func (s *Stack) popAndReturn(v Value) Value {
 	s.nextLoc = s.Frames[len(s.Frames)-1].Loc
 	s.Frames = s.Frames[:len(s.Frames)-1]
@@ -107,7 +101,7 @@ func (s *Stack) push(k Value, tail bool) {
 }
 func (s *Stack) StackLocations(includeBuiltin bool) (locs []string) {
 	for _, k := range s.Frames {
-		if k.Loc != "(builtin)" || includeBuiltin {
+		if k.Loc != "(sys)" || includeBuiltin {
 			locs = append(locs, k.Loc)
 		}
 	}
@@ -133,7 +127,7 @@ func (f *Func) Call(a ...interface{}) (result Value, err error) {
 func (f *Func) CallOnStack(dbg *Stack, deadline time.Time, args Value) (result Value, err error) {
 	expr := L(args.L(), F(f).Quote())
 	if dbg == nil {
-		dbg = &Stack{nextLoc: toplevelName}
+		dbg = &Stack{nextLoc: "(call)"}
 	}
 	defer debugCatch(dbg, &err)
 	return __exec(expr, execState{local: (*Context)(nil), debug: dbg, deadline: deadline.Unix()}), nil
@@ -141,10 +135,10 @@ func (f *Func) CallOnStack(dbg *Stack, deadline time.Time, args Value) (result V
 func (f *Func) String() string {
 	if f.nat == Void {
 		return ifstr(f.name == "", "#|missing native code|#", f.name+" #|native code|#")
-	} else if f.vararg && len(f.natArgNames) == 0 {
-		return ifstr(f.m, "(lambda-syntax ", "(lambda ") + f.name + " " + f.nat.String() + ")"
+	} else if f.Vararg && len(f.natArgNames) == 0 {
+		return ifstr(f.Macro, "(lambda-syntax ", "(lambda ") + f.name + " " + f.nat.String() + ")"
 	}
-	return ifstr(f.m, "(lambda-syntax (", "(lambda (") + strings.Join(f.natArgNames, " ") + ifstr(f.vararg, " . "+f.name, "") + ") " + f.nat.String() + ")"
+	return ifstr(f.Macro, "(lambda-syntax (", "(lambda (") + strings.Join(f.natArgNames, " ") + ifstr(f.Vararg, " . "+f.name, "") + ") " + f.nat.String() + ")"
 }
 
 // In pops an argument
@@ -181,7 +175,7 @@ func (ctx *Context) set(k string, v Value) {
 	ctx.M[k] = v
 }
 func (ctx *Context) Store(k string, v Value) *Context {
-	if v.Type() == FUNC && v.F().fun != nil {
+	if v.Type() == FUNC && v.F().F != nil {
 		v.F().name = k
 	}
 	if _, mv := ctx.find(k); mv == nil {
@@ -293,20 +287,20 @@ TAIL_CALL:
 			return state.debug.popAndReturn(Void)
 		case "lambda", "lambda-syntax":
 			state.assert(moveCdr(&c) || state.panic("lambda: missing binding list"))
-			f := &Func{natCls: state.local, m: va != "lambda", source: state.debug.LastLocation()}
+			f := &Func{natCls: state.local, Macro: va != "lambda", Source: state.debug.LastLocation()}
 			switch c.val.Type() {
 			case SYM: // (lambda* args body)
-				f.name, f.vararg = fmt.Sprint(c.val.V()), true
+				f.name, f.Vararg = fmt.Sprint(c.val.V()), true
 			case LIST: // (lambda* (a1 a2 ... an) body)
 				for bindings := c.val.L(); bindings != nil; bindings = bindings.next {
 					if p := fmt.Sprint(bindings.val.V()); bindings.Improper() {
-						f.name, f.vararg = p, true
+						f.name, f.Vararg = p, true
 					} else if !bindings.Empty() {
 						f.natArgNames = append(f.natArgNames, p)
 					}
 				}
 			default:
-				f.vararg = true
+				f.Vararg = true
 			}
 			state.assert(moveCdr(&c) || state.panic("lambda: missing body"))
 			_ = c.HasProperCdr() && f.nat.of(L(c, head.Y("lambda-body"), Void, Void)) || f.nat.of(c.val)
@@ -355,7 +349,7 @@ TAIL_CALL:
 			oldValue, m := state.local.find(x)
 			state.assert(m != nil || state.panic("set!: unbound %s", x))
 			state.assert(moveCdr(&c) || state.panic("set!: missing bound value"))
-			state.assert(oldValue.Type() != FUNC || !oldValue.F().m || state.panic("set!: alter bounded macro"))
+			state.assert(oldValue.Type() != FUNC || !oldValue.F().Macro || state.panic("set!: alter bounded macro"))
 			m.set(x, __exec(c.val, state))
 			return state.debug.popAndReturn(Void)
 		case "define":
@@ -382,7 +376,7 @@ TAIL_CALL:
 	state.assert(fn.Type() == FUNC || state.panic("invalid function: %v", head))
 	cc := fn.F()
 
-	if cc.m && !state.macroMode {
+	if cc.Macro && !state.macroMode {
 		args := InitListBuilder().Append(F(cc))
 		c.next.Foreach(func(v Value) bool { args = args.Append(v.Quote()); return true })
 		state.macroMode = true
@@ -397,13 +391,13 @@ TAIL_CALL:
 	}
 
 	state.macroMode = false // clear the macro flag because a macro may call other macros as well, so more unwrappings may take place
-	if cc.fun == nil {
+	if cc.F == nil {
 		m := &Context{parent: cc.natCls}
 		for i, name := range cc.natArgNames {
 			state.assert(moveCdr(&c) || state.panic("too few arguments, expect at least %d", i+1))
 			m.set(name, __exec(c.val, state))
 		}
-		if cc.vararg {
+		if cc.Vararg {
 			values := InitListBuilder()
 			c.next.Foreach(func(v Value) bool { values = values.Append(__exec(v, state)); return true })
 			m.set(cc.name, values.Build())
@@ -411,17 +405,17 @@ TAIL_CALL:
 			state.assert(!c.HasProperCdr() || state.panic("too many arguments, expect exact %d", len(cc.natArgNames)))
 		}
 		state.local, expr, tailCall = m, cc.nat, true
-		state.debug.nextLoc = (cc.source)
+		state.debug.nextLoc = (cc.Source)
 		goto TAIL_CALL
 	}
 
 	args := InitListBuilder()
 	c.next.Foreach(func(v Value) bool { args = args.Append(__exec(v, state)); return true })
-	state.assert(args.Len == cc.funMinArgNum || (cc.vararg && args.Len >= cc.funMinArgNum) || state.panic("call: expect %d arguments", cc.funMinArgNum))
+	state.assert(args.Len == cc.MinArgNum || (cc.Vararg && args.Len >= cc.MinArgNum) || state.panic("call: expect %d arguments", cc.MinArgNum))
 
-	state.debug.nextLoc = (cc.source)
+	state.debug.nextLoc = (cc.Source)
 	s := State{Context: state.local, Caller: head, Stack: state.debug, Args: args.head, deadline: state.deadline}
-	cc.fun(&s)
+	cc.F(&s)
 	return state.debug.popAndReturn(s.Out)
 }
 
@@ -437,7 +431,7 @@ func (ctx *Context) Parse(filename, text string) (v Value, err error) {
 
 	v = ctx.scan(s, false)
 	_ = v.Type() == LIST && v.of(L(v.L(), Y("if", 0), Void, Void)) || v.of(L(Empty, Y("if", 0), Void, Void, v))
-	v = F(&Func{nat: v, natCls: ctx, natToplevel: true, source: filename})
+	v = F(&Func{nat: v, natCls: ctx, natToplevel: true, Source: filename})
 	return L(Empty, v), nil
 }
 
@@ -451,7 +445,7 @@ func debugCatch(dbg *Stack, err *error) {
 }
 
 func (ctx *Context) Exec(deadline time.Time, c Value) (output Value, err error) {
-	dbg := &Stack{nextLoc: toplevelName}
+	dbg := &Stack{nextLoc: "(toplevel)"}
 	defer debugCatch(dbg, &err)
 	return __exec(c, execState{local: ctx, debug: dbg, deadline: deadline.Unix() + 1}), nil
 }
@@ -595,6 +589,12 @@ func ifstr(v bool, t, f string) string {
 	}
 	return f
 }
+func ifint(v bool, t, f int) int {
+	if v {
+		return t
+	}
+	return f
+}
 func panicif(v bool, t string) {
 	if v {
 		panic(t)
@@ -603,8 +603,10 @@ func panicif(v bool, t string) {
 
 // V creates Value from interface{}
 func V(v interface{}) (va Value) {
-	if v, ok := v.(Value); ok {
-		return v
+	if vv, ok := v.(Value); ok {
+		return vv
+	} else if f, ok := v.(*Func); ok {
+		return F(f)
 	}
 	switch rv := reflect.ValueOf(v); rv.Kind() {
 	case reflect.Interface:
@@ -621,6 +623,35 @@ func V(v interface{}) (va Value) {
 		return S(rv.String())
 	case reflect.Bool:
 		return B(rv.Bool())
+	case reflect.Func:
+		rt := rv.Type()
+		f, rtNumIn := &Func{Vararg: rt.IsVariadic()}, rt.NumIn()
+		f.MinArgNum = rtNumIn + ifint(f.Vararg, -1, 0) + ifint(rtNumIn > 0 && rt.In(0) == stateType, -1, 0)
+		f.F = func(s *State) {
+			ins := make([]reflect.Value, 0, rtNumIn)
+			for i := 0; i < rtNumIn+ifint(f.Vararg, -1, 0); i++ {
+				if t := rt.In(i); i == 0 && t == stateType {
+					ins = append(ins, reflect.ValueOf(s))
+				} else {
+					ins = append(ins, s.In().TypedVal(t))
+				}
+			}
+			s.Args.Foreach(func(v Value) bool { ins = append(ins, s.In().TypedVal(rt.In(rtNumIn-1).Elem())); return true })
+			switch outs := rv.Call(ins); rt.NumOut() {
+			case 1:
+				s.Out = V(outs[0].Interface())
+			case 2:
+				err, _ := outs[1].Interface().(error)
+				s.Out.nop(err != nil && s.Out.of(V(err)) || s.Out.of(V(outs[0].Interface())))
+			default:
+				r := InitListBuilder()
+				for _, o := range outs {
+					r = r.Append(V(o.Interface()))
+				}
+				s.Out.nop(r.Len != 0 && s.Out.of(r.Build()) || s.Out.of(Void))
+			}
+		}
+		return F(f)
 	}
 	*va.A() = v
 	return va
@@ -938,15 +969,13 @@ func (b ListBuilder) Append(v Value) ListBuilder {
 	panicif(!b.Cur.empty, "append to improper list")
 	b.Cur.val, b.Cur.next, b.Cur.empty = v, &Pair{empty: true}, false
 	b.last = b.Cur
-	b.Cur = b.Cur.next
-	b.Len++
+	b.Cur, b.Len = b.Cur.next, b.Len+1
 	return b
 }
-func ParseNumber(text string) Value {
+func ParseNumber(text string) (vn Value) {
 	if v, err := strconv.ParseInt(text, 0, 64); err == nil {
 		return I(v)
-	} else if v, err := strconv.ParseFloat(text, 64); err == nil {
-		return N(v)
 	}
-	return Void
+	v, err := strconv.ParseFloat(text, 64)
+	return vn.nop(err == nil && vn.of(N(v)) || vn.of(Void))
 }

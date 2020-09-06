@@ -46,7 +46,7 @@ func (v Value) Marshal() (buf []byte, err error) {
 			f := vl.val.F()
 			p.WriteByte('T')
 			p.WriteByte('s') // write a STR value
-			writeString(p, f.source)
+			writeString(p, f.Source)
 			v = f.nat
 		}
 	}
@@ -143,7 +143,7 @@ func (v *Value) unmarshal(ctx *Context, p interface {
 		src.unmarshal(ctx, p)
 		panicif(src.Type() != STR, "invalid toplevel binary data")
 		body.unmarshal(ctx, p)
-		*v = L(Empty, F(&Func{nat: body, natCls: ctx, natToplevel: true, source: src.S()}))
+		*v = L(Empty, F(&Func{nat: body, natCls: ctx, natToplevel: true, Source: src.S()}))
 	case 'n':
 		var v2 float64
 		panicerr(binary.Read(p, binary.BigEndian, &v2))

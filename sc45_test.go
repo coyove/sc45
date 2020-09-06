@@ -110,7 +110,7 @@ func TestOne(t *testing.T) {
 		log.Println(v, "===>", r)
 	}
 	_ = assert
-	it.Store("assert", NewGoFunc(func(c Value) {
+	it.Store("assert", V(func(c Value) {
 		if c.IsFalse() {
 			panic(fmt.Errorf("assertion failed"))
 		}
@@ -130,8 +130,8 @@ func TestOne(t *testing.T) {
 		s.Out = V(d)
 		return
 	}))
-	it.Store("make/vararg", NewGoFunc(func(v ...interface{}) []interface{} { return v }))
-	it.Store("make/vararg2", NewGoFunc(func(s *State, a1 int32, v2 ...string) []interface{} {
+	it.Store("make/vararg", V(func(v ...interface{}) []interface{} { return v }))
+	it.Store("make/vararg2", V(func(s *State, a1 int32, v2 ...string) []interface{} {
 		a := []interface{}{a1}
 		for _, v := range v2 {
 			a = append(a, v)
