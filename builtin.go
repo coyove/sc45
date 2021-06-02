@@ -30,7 +30,7 @@ func NewFunc(a int, f func(*State)) Value {
 }
 
 func (s *State) InMap() map[string]Value {
-	v, _ := s.In().V().(map[string]Value)
+	v, _ := s.In().Interface().(map[string]Value)
 	return v
 }
 
@@ -63,14 +63,14 @@ func init() {
 
 	Default.Store("true", B(true))
 	Default.Store("false", B(false))
-	Default.Store("begin", NewFunc(Macro|Vararg, func(s *State) { s.Out = L(s.Args, s.Caller.Y("if"), Void, Void) }))
+	Default.Store("begin", NewFunc(Macro|Vararg, func(s *State) { s.Out = L(s.Args, s.Caller.SetText("if"), Void, Void) }))
 	Default.Store("and", NewFunc(Macro|Vararg, func(s *State) {
 		if s.Args.MustProper().Empty() {
 			s.Out = B(true)
 		} else if !s.Args.HasProperCdr() {
 			s.Out = s.In()
 		} else {
-			s.Out = L(Empty, s.Caller.Y("if"), s.In(), L(s.Args, s.Caller.Y("and")), B(false))
+			s.Out = L(Empty, s.Caller.SetText("if"), s.In(), L(s.Args, s.Caller.SetText("and")), B(false))
 		}
 	}))
 	Default.Store("or", NewFunc(Macro|Vararg, func(s *State) {
@@ -79,7 +79,7 @@ func init() {
 		} else if !s.Args.HasProperCdr() {
 			s.Out = s.In()
 		} else {
-			s.Out = L(Empty, s.Caller.Y("if"), s.In(), B(true), L(s.Args, s.Caller.Y("or")))
+			s.Out = L(Empty, s.Caller.SetText("if"), s.In(), B(true), L(s.Args, s.Caller.SetText("or")))
 		}
 	}))
 	Default.Store("==", NewFunc(1|Vararg, func(s *State) {
@@ -114,7 +114,7 @@ func init() {
 		s.Out = B(flag)
 	}))
 	Default.Store(">=", NewFunc(1|Vararg|Macro, func(s *State) {
-		s.Out = L(Empty, s.Caller.Y("not"), L(s.Args, s.Caller.Y("<")))
+		s.Out = L(Empty, s.Caller.SetText("not"), L(s.Args, s.Caller.SetText("<")))
 	}))
 	Default.Store("not", NewFunc(1, func(s *State) { s.Out = B(s.In().IsFalse()) }))
 	Default.Store("+", NewFunc(1|Vararg, func(s *State) {
@@ -123,8 +123,8 @@ func init() {
 			for !s.Args.MustProper().Empty() {
 				s.Out = s.Out.Add(s.Nv())
 			}
-		case STR:
-			vs := bytes.NewBufferString(s.Out.S())
+		case TEXT:
+			vs := bytes.NewBufferString(s.Out.Text())
 			for !s.Args.MustProper().Empty() {
 				vs.WriteString(s.S())
 			}
@@ -136,7 +136,7 @@ func init() {
 	Default.Store("-", NewFunc(1|Vararg, func(s *State) {
 		a := s.Nv()
 		if s.Args.MustProper().Empty() {
-			af, ai, aIsInt := a.N()
+			af, ai, aIsInt := a.Number()
 			_ = aIsInt && s.Out.of(I(-ai)) || s.Out.of(N(-af))
 			return
 		}
@@ -167,13 +167,13 @@ func init() {
 		var names, values []Value
 		s.L().Foreach(func(pair Value) bool {
 			s.assert(pair.Type() == LIST || s.panic("invalid binding list format: %v", pair))
-			p := pair.L()
-			s.assert(p.HasProperCdr() && p.val.Type() == SYM && p.val.S() != "" || s.panic("invalid binding list format: %v", pair))
+			p := pair.List()
+			s.assert(p.HasProperCdr() && p.val.Type() == SYM && p.val.Text() != "" || s.panic("invalid binding list format: %v", pair))
 			names, values = append(names, p.val), append(values, p.next.val)
 			return true
 		})
-		fn := L(Empty, s.Caller.Y("lambda"), L(Empty, names...), L(s.Args, s.Caller.Y("if"), Void, Void))
-		s.Out = L(L(Empty, values...).L(), fn)
+		fn := L(Empty, s.Caller.SetText("lambda"), L(Empty, names...), L(s.Args, s.Caller.SetText("if"), Void, Void))
+		s.Out = L(L(Empty, values...).List(), fn)
 	}))
 	Default.Store("eval", NewFunc(1, func(s *State) {
 		s.Out = __exec(s.In(), execState{local: s.Context, debug: s.Stack, deadline: s.deadline})
@@ -214,7 +214,7 @@ func init() {
 	}))
 	Default.Store("init", NewFunc(1, func(s *State) { s.Out = L(s.L().Take(-2)) }))
 	Default.Store("skip", NewFunc(2, func(s *State) {
-		l, n := s.L(), s.Nv().I()
+		l, n := s.L(), s.Nv().Int()
 		for ; n > 0 && l != nil; l, n = l.next, n-1 {
 		}
 		panicif(n > 0, "skip: not enough values")
@@ -226,7 +226,7 @@ func init() {
 		rc, old := s.In(), s.Stack.Frames
 		defer func() {
 			if r := recover(); r != nil {
-				_ = rc.Type() != FUNC && s.Out.of(V(r)) || s.Out.of(ev2(rc.F().CallOnStack(s.Stack, s.Deadline(), L(Empty, V(r)))))
+				_ = rc.Type() != FUNC && s.Out.of(V(r)) || s.Out.of(ev2(rc.Func().CallOnStack(s.Stack, s.Deadline(), L(Empty, V(r)))))
 				s.Stack.Frames = old
 			}
 		}()
@@ -241,19 +241,19 @@ func init() {
 	}))
 	Default.Store("raise", NewFunc(1, func(s *State) { panic(s.In()) }))
 	Default.Store("symbol->string", NewFunc(1, func(s *State) { s.Out = S(s.Y()) }))
-	Default.Store("number->string", NewFunc(1, func(s *State) { s.Out = S(fmt.Sprint(s.Nv().V())) }))
+	Default.Store("number->string", NewFunc(1, func(s *State) { s.Out = S(fmt.Sprint(s.Nv().Interface())) }))
 	Default.Store("string->symbol", NewFunc(1, func(s *State) { s.Out = Y(s.S(), 0) }))
 	Default.Store("string->error", NewFunc(1, func(s *State) { s.Out = V(fmt.Errorf(s.S())) }))
 	Default.Store("string->number", NewFunc(1, func(s *State) { s.Out = ParseNumber(s.S()) }))
-	Default.Store("error?", NewFunc(1, func(s *State) { _, ok := s.In().V().(error); s.Out = B(ok) }))
-	Default.Store("null?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == LIST && s.LastIn.L().MustProper().Empty()) }))
-	Default.Store("list?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == LIST && s.LastIn.L().IsProperList()) }))
+	Default.Store("error?", NewFunc(1, func(s *State) { _, ok := s.In().Interface().(error); s.Out = B(ok) }))
+	Default.Store("null?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == LIST && s.LastIn.List().MustProper().Empty()) }))
+	Default.Store("list?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == LIST && s.LastIn.List().Proper()) }))
 	Default.Store("void?", NewFunc(1, func(s *State) { s.Out = B(s.In() == Void) }))
 	Default.Store("pair?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == LIST) }))
 	Default.Store("symbol?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == SYM) }))
 	Default.Store("boolean?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == BOOL) }))
 	Default.Store("number?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == NUM) }))
-	Default.Store("string?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == STR) }))
+	Default.Store("string?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == TEXT) }))
 	Default.Store("stringify", NewFunc(1, func(s *State) { s.Out = S(s.In().String()) }))
 	Default.Store("letrec", NewFunc(1|Vararg|Macro, func(s *State) {
 		/* Unwrap to:
@@ -264,19 +264,19 @@ func init() {
 				(set! 'varn varb_tmp)
 				expr...                                // expressions
 		*/
-		let, setq := s.Caller.Y("let"), s.Caller.Y("set!")
+		let, setq := s.Caller.SetText("let"), s.Caller.SetText("set!")
 		var innersets, innerbinds, outerbinds []Value
 		s.L().Foreach(func(v Value) bool {
 			s.assert(v.Type() == LIST || s.panic("invalid binding list format: %v", v))
-			b := v.L()
-			s.assert(b.HasProperCdr() && b.val.Type() == SYM && b.val.S() != "" || s.panic("invalid binding list format: %v", v))
-			tmpvar := Y(b.val.S()+"tmp", 0)
+			b := v.List()
+			s.assert(b.HasProperCdr() && b.val.Type() == SYM && b.val.Text() != "" || s.panic("invalid binding list format: %v", v))
+			tmpvar := Y(b.val.Text()+"tmp", 0)
 			innersets = append(innersets, L(Empty, setq, b.val, tmpvar))
 			innerbinds = append(innerbinds, L(Empty, tmpvar, b.next.val))
 			outerbinds = append(outerbinds, L(Empty, b.val, Void))
 			return true
 		})
-		inner := L(L(s.Args, innersets...).L(), let, L(Empty, innerbinds...))
+		inner := L(L(s.Args, innersets...).List(), let, L(Empty, innerbinds...))
 		outer := []Value{let, L(Empty, outerbinds...), inner}
 		s.Out = L(Empty, outer...)
 	}))
@@ -287,20 +287,20 @@ func init() {
 				...
 					expr...
 		*/
-		let, binds := s.Caller.Y("let"), s.L().ToSlice()
-		last := L(s.Args, s.Caller.Y("begin"))
+		let, binds := s.Caller.SetText("let"), s.L().ToSlice()
+		last := L(s.Args, s.Caller.SetText("begin"))
 		for i := len(binds) - 1; i >= 0; i-- {
 			bd := binds[i]
 			s.assert(bd.Type() == LIST || s.panic("invalid binding list format: %v", bd))
-			lst := bd.L()
-			s.assert(lst.HasProperCdr() && lst.val.Type() == SYM && lst.val.S() != "" || s.panic("invalid binding list format: %v", bd))
+			lst := bd.List()
+			s.assert(lst.HasProperCdr() && lst.val.Type() == SYM && lst.val.Text() != "" || s.panic("invalid binding list format: %v", bd))
 			last = L(Empty, let, L(Empty, bd), last)
 		}
 		s.Out = last
 	}))
 	Default.Store("define-modules", NewFunc(1|Vararg, func(s *State) {
 	}))
-	Default.Store("go->value", NewFunc(1, func(s *State) { s.Out = Vrec(s.In().V()) }))
+	Default.Store("go->value", NewFunc(1, func(s *State) { s.Out = Vrec(s.In().Interface()) }))
 	Default.Store("hash-new", NewFunc(Vararg, func(s *State) {
 		m := map[string]Value{}
 		for !s.Args.MustProper().Empty() {
@@ -322,27 +322,27 @@ func init() {
 
 	Default.Store("string-length", NewFunc(1, func(s *State) { s.Out = I(int64(len(s.S()))) }))
 	Default.Store("substring?", NewFunc(2, func(s *State) { s.Out = B(strings.Contains(s.S(), s.S())) }))
-	Default.Store("vector-bytes", NewFunc(1, func(s *State) { s.Out = V(make([]byte, s.Nv().I())) }))
-	Default.Store("vector-strings", NewFunc(1, func(s *State) { s.Out = V(make([]string, s.Nv().I())) }))
-	Default.Store("vector-ints", NewFunc(1, func(s *State) { s.Out = V(make([]int, s.Nv().I())) }))
-	Default.Store("vector-int64s", NewFunc(1, func(s *State) { s.Out = V(make([]int64, s.Nv().I())) }))
-	Default.Store("vector-len", NewFunc(1, func(s *State) { s.Out = I(int64((reflect.ValueOf(s.In().V()).Len()))) }))
-	Default.Store("vector-null?", NewFunc(1, func(s *State) { s.Out = B(reflect.ValueOf(s.In().V()).Len() == 0) }))
+	Default.Store("vector-bytes", NewFunc(1, func(s *State) { s.Out = V(make([]byte, s.Nv().Int())) }))
+	Default.Store("vector-strings", NewFunc(1, func(s *State) { s.Out = V(make([]string, s.Nv().Int())) }))
+	Default.Store("vector-ints", NewFunc(1, func(s *State) { s.Out = V(make([]int, s.Nv().Int())) }))
+	Default.Store("vector-int64s", NewFunc(1, func(s *State) { s.Out = V(make([]int64, s.Nv().Int())) }))
+	Default.Store("vector-len", NewFunc(1, func(s *State) { s.Out = I(int64((reflect.ValueOf(s.In().Interface()).Len()))) }))
+	Default.Store("vector-null?", NewFunc(1, func(s *State) { s.Out = B(reflect.ValueOf(s.In().Interface()).Len() == 0) }))
 	Default.Store("vector-nth", NewFunc(2, func(s *State) {
-		rm := reflect.ValueOf(s.In().V())
-		s.Out = V(rm.Index(int(s.Nv().I())).Interface())
+		rm := reflect.ValueOf(s.In().Interface())
+		s.Out = V(rm.Index(int(s.Nv().Int())).Interface())
 	}))
 	Default.Store("vector-set-nth!", NewFunc(3, func(s *State) {
-		rm := reflect.ValueOf(s.In().V())
-		rm.Index(int(s.Nv().I())).Set(s.In().TypedVal(rm.Type().Elem()))
+		rm := reflect.ValueOf(s.In().Interface())
+		rm.Index(int(s.Nv().Int())).Set(s.In().TypedVal(rm.Type().Elem()))
 	}))
 	Default.Store("vector-slice", NewFunc(3, func(s *State) {
-		rl := reflect.ValueOf(s.In().V())
-		start, end := int(s.Nv().I()), int(s.Nv().I())
+		rl := reflect.ValueOf(s.In().Interface())
+		start, end := int(s.Nv().Int()), int(s.Nv().Int())
 		s.Out = V(rl.Slice(start, end).Interface())
 	}))
 	Default.Store("vector-concat", NewFunc(2, func(s *State) {
-		rv1, rv2 := reflect.ValueOf(s.In().V()), reflect.ValueOf(s.In().V())
+		rv1, rv2 := reflect.ValueOf(s.In().Interface()), reflect.ValueOf(s.In().Interface())
 		s.assert(rv1.Type() == rv2.Type() || s.panic("vector-concat: different type"))
 		r := reflect.MakeSlice(rv1.Type(), rv1.Len(), rv1.Len()+rv2.Len())
 		reflect.Copy(r, rv1)
@@ -350,7 +350,7 @@ func init() {
 		s.Out = V(r.Interface())
 	}))
 	Default.Store("vector-foreach", NewFunc(2, func(s *State) {
-		rl, fn := reflect.ValueOf(s.In().V()), s.F()
+		rl, fn := reflect.ValueOf(s.In().Interface()), s.F()
 		for i := 0; i < rl.Len(); i++ {
 			flag, err := fn.CallOnStack(s.Stack, s.Deadline(), L(Empty, I(int64(i)), V(rl.Index(i).Interface())))
 			s.assert(err == nil || s.panic("invalid callback "))
@@ -391,31 +391,31 @@ func init() {
 		s.Out = right
 	}))
 	Default.Store("struct-get", NewFunc(1|Vararg, func(s *State) {
-		rv := reflect.ValueOf(s.In().V())
+		rv := reflect.ValueOf(s.In().Interface())
 		s.Args.Foreach(func(v Value) bool {
 			if rv.Kind() == reflect.Ptr {
 				rv = rv.Elem()
 			}
 			s.assert(v.Type() == SYM || s.panic("expect field name to be symbol: %v", v))
-			rv = rv.FieldByName(v.S())
+			rv = rv.FieldByName(v.Text())
 			return true
 		})
 		s.Out = V(rv.Interface())
 	}))
 	Default.Store("struct-set!", NewFunc(2|Vararg, func(s *State) {
-		rv := reflect.ValueOf(s.In().V())
+		rv := reflect.ValueOf(s.In().Interface())
 		v := s.In()
 		s.Args.Foreach(func(v Value) bool {
 			if rv.Kind() == reflect.Ptr {
 				rv = rv.Elem()
 			}
 			s.assert(v.Type() == SYM || s.panic("expect field name to be symbol: %v", v))
-			rv = rv.FieldByName(v.S())
+			rv = rv.FieldByName(v.Text())
 			return true
 		})
-		rv.Set(reflect.ValueOf(v.V()))
+		rv.Set(reflect.ValueOf(v.Interface()))
 	}))
-	Default.Store("display", NewFunc(Vararg, func(s *State) { fmt.Fprintln(DefaultStdout, L(s.Args).V().([]interface{})...) }))
+	Default.Store("display", NewFunc(Vararg, func(s *State) { fmt.Fprintln(DefaultStdout, L(s.Args).Interface().([]interface{})...) }))
 	Default.Store("newline", NewFunc(0, func(s *State) { fmt.Fprintln(DefaultStdout) }))
 	Default.Store("regex-match", NewFunc(2, func(s *State) {
 		s.Out = B(regexp.MustCompile(s.S()).MatchString(s.S()))
@@ -424,11 +424,11 @@ func init() {
 		// s.Out = V(regexp.MustCompile(s.In(0, 's').S()).FindAllStringSubmatch(s.In(1, 's').S(), int(s.In(2, 'n').N())))
 	}))
 	Default.Store("json", NewFunc(1, func(s *State) {
-		buf, err := json.MarshalIndent(s.In().V(), "", "  ")
+		buf, err := json.MarshalIndent(s.In().Interface(), "", "  ")
 		s.Out = ev2(string(buf), err)
 	}))
 	Default.Store("json-c", NewFunc(1, func(s *State) {
-		buf, err := json.Marshal(s.In().V())
+		buf, err := json.Marshal(s.In().Interface())
 		s.Out = ev2(string(buf), err)
 	}))
 	Default.Store("json-parse", NewFunc(1, func(s *State) {
@@ -452,9 +452,9 @@ func init() {
 		parts := strings.Split(a, ".")
 		s.assert(len(parts) > 1 || s.panic("too few fields to set"))
 		structname := parts[0]
-		setter := InitListBuilder().Append(v.Y("struct-set!")).Append(v.Y(structname)).Append(v)
+		setter := InitListBuilder().Append(v.SetText("struct-set!")).Append(v.SetText(structname)).Append(v)
 		for i := 1; i < len(parts); i++ {
-			setter = setter.Append(v.Y(parts[i]).Quote())
+			setter = setter.Append(v.SetText(parts[i]).Quote())
 		}
 		s.Out = setter.Build()
 	}))
@@ -463,9 +463,9 @@ func init() {
 		parts := strings.Split(a, ".")
 		s.assert(len(parts) > 1 || s.panic("too few fields to get"))
 		structname := parts[0]
-		setter := InitListBuilder().Append(s.Caller.Y("struct-get")).Append(s.Caller.Y(structname))
+		setter := InitListBuilder().Append(s.Caller.SetText("struct-get")).Append(s.Caller.SetText(structname))
 		for i := 1; i < len(parts); i++ {
-			setter = setter.Append(s.Caller.Y(parts[i]).Quote())
+			setter = setter.Append(s.Caller.SetText(parts[i]).Quote())
 		}
 		s.Out = setter.Build()
 	}))
@@ -556,8 +556,8 @@ func init() {
 		s.Out = l.Build()
 	}))
 
-	Default.Store("i64", NewFunc(1, func(s *State) { s.Out = s.In() }))
-	Default.Store("u64", NewFunc(1, func(s *State) { *s.Out.A() = uint64(s.I()) }))
+	// Default.Store("i64", NewFunc(1, func(s *State) { s.Out = s.In() }))
+	// Default.Store("u64", NewFunc(1, func(s *State) { *s.Out.A() = uint64(s.I()) }))
 
 	// 	// SRFI-9
 	// 	Default.Install("define-record-type", 1|Macro|Vararg, func(s *State) {
@@ -674,10 +674,10 @@ func (v Value) TypedVal(t reflect.Type) reflect.Value {
 	}
 	if v.Type() == LIST {
 		s := reflect.MakeSlice(t, 0, 0)
-		v.L().Foreach(func(v Value) bool { s = reflect.Append(s, v.TypedVal(t.Elem())); return true })
+		v.List().Foreach(func(v Value) bool { s = reflect.Append(s, v.TypedVal(t.Elem())); return true })
 		return s
 	}
-	vv := v.V()
+	vv := v.Interface()
 	if vv == nil {
 		return reflect.Zero(t)
 	}
@@ -701,32 +701,32 @@ func ev2(v interface{}, err error) (e Value) {
 }
 
 func (v Value) Add(v2 Value) (n Value) {
-	vf, vi, vIsInt := v.N()
-	v2f, v2i, v2IsInt := v2.N()
+	vf, vi, vIsInt := v.Number()
+	v2f, v2i, v2IsInt := v2.Number()
 	if vIsInt && v2IsInt {
 		return I(vi + v2i)
 	}
 	return N(vf + v2f)
 }
 func (v Value) Sub(v2 Value) Value {
-	vf, vi, vIsInt := v.N()
-	v2f, v2i, v2IsInt := v2.N()
+	vf, vi, vIsInt := v.Number()
+	v2f, v2i, v2IsInt := v2.Number()
 	if vIsInt && v2IsInt {
 		return I(vi - v2i)
 	}
 	return N(vf - v2f)
 }
 func (v Value) Mul(v2 Value) Value {
-	vf, vi, vIsInt := v.N()
-	v2f, v2i, v2IsInt := v2.N()
+	vf, vi, vIsInt := v.Number()
+	v2f, v2i, v2IsInt := v2.Number()
 	if vIsInt && v2IsInt {
 		return I(vi * v2i)
 	}
 	return N(vf * v2f)
 }
 func (v Value) Div(v2 Value, idiv bool) Value {
-	vf, vi, vIsInt := v.N()
-	v2f, v2i, v2IsInt := v2.N()
+	vf, vi, vIsInt := v.Number()
+	v2f, v2i, v2IsInt := v2.Number()
 	if vIsInt && v2IsInt {
 		if r := vi / v2i; r*v2i == vi || idiv {
 			return I(r)
@@ -735,8 +735,8 @@ func (v Value) Div(v2 Value, idiv bool) Value {
 	return N(vf / v2f)
 }
 func (v Value) Less(v2 Value, equal bool) bool {
-	vf, vi, vIsInt := v.N()
-	v2f, v2i, v2IsInt := v2.N()
+	vf, vi, vIsInt := v.Number()
+	v2f, v2i, v2IsInt := v2.Number()
 	if vIsInt && v2IsInt {
 		return vi < v2i || (equal && vi == v2i)
 	}

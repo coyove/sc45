@@ -18,14 +18,14 @@ import (
 )
 
 var (
-	Default, Now, Forever = &Context{}, func() int64 { return time.Now().Unix() }, time.Unix(1<<32, 0)
-	Void, Quote, Empty    = Value{}, Y("quote", 0), &Pair{empty: true}
-	Types                 = map[ValueType]string{STR: "string", SYM: "symbol", NUM: "number", LIST: "list", INTF: "interface", FUNC: "function", VOID: "void", BOOL: "boolean"}
-	int64Marker           = unsafe.Pointer(new(int64))
-	stateType, errorType  = reflect.TypeOf(&State{}), reflect.TypeOf((*error)(nil)).Elem()
+	Default, Now, Forever                  = &Context{}, func() int64 { return time.Now().Unix() }, time.Unix(1<<32, 0)
+	Void, Quote, Empty                     = Value{}, Y("quote", 0), &Pair{empty: true}
+	Types                                  = map[ValueType]string{TEXT: "string", SYM: "symbol", NUM: "number", LIST: "list", INTF: "interface", FUNC: "function", VOID: "void", BOOL: "boolean"}
+	int64Marker, boolMarker, float64Marker = unsafe.Pointer(new(int64)), unsafe.Pointer(new(bool)), unsafe.Pointer(new(float64))
+	stateType, errorType                   = reflect.TypeOf(&State{}), reflect.TypeOf((*error)(nil)).Elem()
 )
 
-const STR, SYM, NUM, BOOL, LIST, INTF, FUNC, VOID ValueType = 's', 'y', 'n', 'b', 'l', 'i', 'f', 'v'
+const TEXT, SYM, NUM, BOOL, LIST, INTF, FUNC, VOID ValueType = 's', 'y', 'n', 'b', 'l', 'i', 'f', 'v'
 
 type (
 	ValueType byte
@@ -125,7 +125,7 @@ func (f *Func) Call(a ...interface{}) (result Value, err error) {
 	return f.CallOnStack(nil, Forever, v.Build())
 }
 func (f *Func) CallOnStack(dbg *Stack, deadline time.Time, args Value) (result Value, err error) {
-	expr := L(args.L(), F(f).Quote())
+	expr := L(args.List(), F(f).Quote())
 	if dbg == nil {
 		dbg = &Stack{nextLoc: "(call)"}
 	}
@@ -150,14 +150,14 @@ func (s *State) In() Value {
 	return v
 }
 func (s *State) Nv() Value                 { return s.In().expect(s, NUM) }
-func (s *State) N() (float64, int64, bool) { return s.In().expect(s, NUM).N() }
-func (s *State) I() int64                  { return s.In().expect(s, NUM).I() }
-func (s *State) S() string                 { return s.In().expect(s, STR).S() }
-func (s *State) Y() string                 { return s.In().expect(s, SYM).S() }
-func (s *State) L() *Pair                  { return s.In().expect(s, LIST).L() }
-func (s *State) B() bool                   { return s.In().expect(s, BOOL).B() }
-func (s *State) F() *Func                  { return s.In().expect(s, FUNC).F() }
-func (s *State) V() interface{}            { return s.In().V() }
+func (s *State) N() (float64, int64, bool) { return s.In().expect(s, NUM).Number() }
+func (s *State) I() int64                  { return s.In().expect(s, NUM).Int() }
+func (s *State) S() string                 { return s.In().expect(s, TEXT).Text() }
+func (s *State) Y() string                 { return s.In().expect(s, SYM).Text() }
+func (s *State) L() *Pair                  { return s.In().expect(s, LIST).List() }
+func (s *State) B() bool                   { return s.In().expect(s, BOOL).Bool() }
+func (s *State) F() *Func                  { return s.In().expect(s, FUNC).Func() }
+func (s *State) V() interface{}            { return s.In().Interface() }
 func (s *State) Deadline() time.Time       { return time.Unix(s.deadline, 0) }
 
 func (ctx *Context) find(k string) (Value, *Context) {
@@ -175,8 +175,8 @@ func (ctx *Context) set(k string, v Value) {
 	ctx.M[k] = v
 }
 func (ctx *Context) Store(k string, v Value) *Context {
-	if v.Type() == FUNC && v.F().F != nil {
-		v.F().name = k
+	if v.Type() == FUNC && v.Func().F != nil {
+		v.Func().name = k
 	}
 	if _, mv := ctx.find(k); mv == nil {
 		ctx.set(k, v)
@@ -205,10 +205,10 @@ func (ctx *Context) Copy() *Context {
 }
 
 func __execQuasi(expr Value, state execState) (Value, *Pair) {
-	if expr.Type() == LIST && !expr.L().MustProper().Empty() {
-		lst := expr.L()
+	if expr.Type() == LIST && !expr.List().MustProper().Empty() {
+		lst := expr.List()
 		if x := lst.val; x.Type() == SYM {
-			switch x.S() {
+			switch x.Text() {
 			case "unquote":
 				state.assert(lst.HasProperCdr() || state.panic("invalid unquote syntax"))
 				return __exec(lst.next.val, state), nil
@@ -216,7 +216,7 @@ func __execQuasi(expr Value, state execState) (Value, *Pair) {
 				state.assert(lst.HasProperCdr() || state.panic("invalid unquote-splicing syntax"))
 				v := __exec(lst.next.val, state)
 				if v.Type() == LIST {
-					return Void, v.L()
+					return Void, v.List()
 				}
 				return Void, &Pair{val: v}
 			}
@@ -246,7 +246,7 @@ TAIL_CALL:
 	switch expr.Type() {
 	case LIST: // evaluating the list
 	case SYM:
-		v, ok := state.local.Load(expr.S())
+		v, ok := state.local.Load(expr.Text())
 		state.assert(ok || state.panic("unbound %v", expr))
 		expr = v
 		fallthrough
@@ -258,7 +258,7 @@ TAIL_CALL:
 	}
 
 	state.assert(Now() < state.deadline || state.panic("timeout"))
-	c := expr.L()
+	c := expr.List()
 	if c.MustProper().Empty() {
 		return L(Empty)
 	}
@@ -267,7 +267,7 @@ TAIL_CALL:
 	state.debug.push(head, tailCall)
 
 	if head.Type() == SYM {
-		switch va := head.S(); va {
+		switch va := head.Text(); va {
 		case "if", "lambda-body":
 			state.assert(moveCdr(&c) || state.panic("invalid if syntax, missing condition"))
 			if !__exec(c.val, state).IsFalse() {
@@ -290,10 +290,10 @@ TAIL_CALL:
 			f := &Func{natCls: state.local, Macro: va != "lambda", Source: state.debug.LastLocation()}
 			switch c.val.Type() {
 			case SYM: // (lambda* args body)
-				f.name, f.Vararg = fmt.Sprint(c.val.V()), true
+				f.name, f.Vararg = fmt.Sprint(c.val.Interface()), true
 			case LIST: // (lambda* (a1 a2 ... an) body)
-				for bindings := c.val.L(); bindings != nil; bindings = bindings.next {
-					if p := fmt.Sprint(bindings.val.V()); bindings.Improper() {
+				for bindings := c.val.List(); bindings != nil; bindings = bindings.next {
+					if p := fmt.Sprint(bindings.val.Interface()); bindings.Improper() {
 						f.name, f.Vararg = p, true
 					} else if !bindings.Empty() {
 						f.natArgNames = append(f.natArgNames, p)
@@ -303,27 +303,27 @@ TAIL_CALL:
 				f.Vararg = true
 			}
 			state.assert(moveCdr(&c) || state.panic("lambda: missing body"))
-			_ = c.HasProperCdr() && f.nat.of(L(c, head.Y("lambda-body"), Void, Void)) || f.nat.of(c.val)
+			_ = c.HasProperCdr() && f.nat.of(L(c, head.SetText("lambda-body"), Void, Void)) || f.nat.of(c.val)
 			return state.debug.popAndReturn(F(f))
 		case "match":
 			state.assert(moveCdr(&c) || state.panic("match: missing source"))
 			source := __exec(c.val, state)
 			state.assert(moveCdr(&c) && c.val.Type() == LIST || state.panic("match: missing symbol list"))
-			symbols := c.val.L().ToSlice()
+			symbols := c.val.List().ToSlice()
 		MATCH_NEXT:
 			// ( (pattern subject) ... )
-			state.assert(moveCdr(&c) && c.val.Type() == LIST && c.val.L().HasProperCdr() || state.panic("match: invalid pattern"))
-			pattern, subject, matched := c.val.L().val, c.val.L().next.val, false
+			state.assert(moveCdr(&c) && c.val.Type() == LIST && c.val.List().HasProperCdr() || state.panic("match: invalid pattern"))
+			pattern, subject, matched := c.val.List().val, c.val.List().next.val, false
 			m := &Context{parent: state.local, M: map[string]Value{}}
 			if pattern.Type() == LIST && source.Type() == LIST {
 				var symbolmap map[string]struct{}
 				if len(symbols) > 0 {
 					symbolmap = map[string]struct{}{}
 					for _, s := range symbols {
-						symbolmap[s.S()] = struct{}{}
+						symbolmap[s.Text()] = struct{}{}
 					}
 				}
-				matched = source.L().match(state, pattern.L(), false, symbolmap, m.M)
+				matched = source.List().match(state, pattern.List(), false, symbolmap, m.M)
 			} else {
 				matched = source.Equals(pattern)
 			}
@@ -345,25 +345,25 @@ TAIL_CALL:
 			panic(fmt.Errorf("unquote outside quasiquote"))
 		case "set!":
 			state.assert(moveCdr(&c) && c.val.Type() == SYM || state.panic("set!: missing symbol"))
-			x := c.val.S()
+			x := c.val.Text()
 			oldValue, m := state.local.find(x)
 			state.assert(m != nil || state.panic("set!: unbound %s", x))
 			state.assert(moveCdr(&c) || state.panic("set!: missing bound value"))
-			state.assert(oldValue.Type() != FUNC || !oldValue.F().Macro || state.panic("set!: alter bounded macro"))
+			state.assert(oldValue.Type() != FUNC || !oldValue.Func().Macro || state.panic("set!: alter bounded macro"))
 			m.set(x, __exec(c.val, state))
 			return state.debug.popAndReturn(Void)
 		case "define":
 			switch moveCdr(&c); c.val.Type() {
 			case SYM:
-				x := c.val.S()
+				x := c.val.Text()
 				_, def := state.local.M[x]
 				state.assert(!def || state.panic("re-define %s", x)).assert(moveCdr(&c) || state.panic("define: missing bound value"))
 				state.local.set(x, __exec(c.val, state))
 			case LIST:
-				lst := c.val.L()
+				lst := c.val.List()
 				state.assert(!lst.MustProper().Empty() || state.panic("define: missing function name"))
 				state.assert(moveCdr(&c) || state.panic("define: missing bound value"))
-				s := L(Empty, head.Y("define"), lst.val, L(c, head.Y("lambda"), L(lst.next)))
+				s := L(Empty, head.SetText("define"), lst.val, L(c, head.SetText("lambda"), L(lst.next)))
 				__exec(s, state)
 			default:
 				panic("define: missing binding symbol")
@@ -374,7 +374,7 @@ TAIL_CALL:
 
 	fn := __exec(head, state)
 	state.assert(fn.Type() == FUNC || state.panic("invalid function: %v", head))
-	cc := fn.F()
+	cc := fn.Func()
 
 	if cc.Macro && !state.macroMode {
 		args := InitListBuilder().Append(F(cc))
@@ -384,7 +384,7 @@ TAIL_CALL:
 		if head.Type() == SYM {
 			// The macro is bounded with a symbol and will not be altered ever, so we can replace the expression with the unwrapped one
 			// The opposite case is like: ((if cond macro1 macro2) a b c ...), we have to unwrap every time
-			*c = *u.nop(u.Type() == LIST && u.of(u) || u.of(L(Empty, head.Y("if"), Void, Void, u))).L()
+			*c = *u.nop(u.Type() == LIST && u.of(u) || u.of(L(Empty, head.SetText("if"), Void, Void, u))).List()
 		}
 		state.macroMode = false
 		return state.debug.popAndReturn(__exec(u, state))
@@ -430,7 +430,7 @@ func (ctx *Context) Parse(filename, text string) (v Value, err error) {
 	}()
 
 	v = ctx.scan(s, false)
-	_ = v.Type() == LIST && v.of(L(v.L(), Y("if", 0), Void, Void)) || v.of(L(Empty, Y("if", 0), Void, Void, v))
+	_ = v.Type() == LIST && v.of(L(v.List(), Y("if", 0), Void, Void)) || v.of(L(Empty, Y("if", 0), Void, Void, v))
 	v = F(&Func{nat: v, natCls: ctx, natToplevel: true, Source: filename})
 	return L(Empty, v), nil
 }
@@ -653,9 +653,9 @@ func V(v interface{}) (va Value) {
 		}
 		return F(f)
 	}
-	*va.A() = v
-	return va
+	return Value{val: uint64(INTF), ptr: unsafe.Pointer(&v)}
 }
+
 func L(lst *Pair, l ...Value) Value {
 	for i := len(l) - 1; i >= 0; i-- {
 		n := &Pair{val: l[i], next: lst}
@@ -664,55 +664,70 @@ func L(lst *Pair, l ...Value) Value {
 	return Value{val: uint64(LIST), ptr: unsafe.Pointer(lst)}
 }
 
-// Float64 available range in uint64: 0x0 - 0x7FF00000`00000001, 0x80000000`00000000 - 0xFFF00000`00000000
-// When bit-inverted, the range is: 0x800FFFFF`FFFFFFFE - 0xFFFFFFFF`FFFFFFFF, 0x000FFFFF`FFFFFFFF - 0x7FFFFFFF`FFFFFFFF
 func N(v float64) (n Value) {
-	return n.nop(math.IsNaN(v) && n.of(Value{val: 0x800FFFFFFFFFFFFE} /*7FF0...01*/) || n.of(Value{val: ^math.Float64bits(v)}))
+	return n.nop(float64(int64(v)) == v && n.of(I(int64(v))) || n.of(Value{val: math.Float64bits(v), ptr: float64Marker}))
 }
+
 func I(v int64) (i Value) {
-	return i.nop(int64(float64(v)) == v && i.of(N(float64(v))) || i.of(Value{val: uint64(v), ptr: int64Marker}))
+	return Value{val: uint64(v), ptr: int64Marker}
 }
-func B(v bool) (b Value)          { return b.nop(v && b.of(Value{val: 2}) || b.of(Value{val: 1})) }
-func Y(v string, ln uint32) Value { return Value{ptr: unsafe.Pointer(&v), val: 1<<51 | uint64(ln)} }
-func S(v string) (vs Value)       { return Value{val: uint64(STR), ptr: unsafe.Pointer(&v)} }
-func F(f *Func) Value             { return Value{val: uint64(FUNC), ptr: unsafe.Pointer(f)} }
+
+func B(v bool) (b Value) {
+	return b.nop(v && b.of(Value{val: 1, ptr: boolMarker}) || b.of(Value{val: 0, ptr: boolMarker}))
+}
+
+func Y(v string, ln uint32) Value {
+	return Value{ptr: unsafe.Pointer(&v), val: 1<<51 | uint64(ln)}
+}
+
+func S(v string) (vs Value) {
+	return Value{val: uint64(TEXT), ptr: unsafe.Pointer(&v)}
+}
+
+func F(f *Func) Value {
+	return Value{val: uint64(FUNC), ptr: unsafe.Pointer(f)}
+}
 
 func (v Value) Quote() (q Value) {
 	t := v.Type()
 	return q.nop((t == LIST || t == SYM) && q.of(L(Empty, Quote, v)) || q.of(v))
 }
+
 func (v Value) Type() ValueType {
-	switch v.val {
-	case 1, 2:
+	switch v.ptr {
+	case boolMarker:
 		return BOOL
-	case uint64(LIST), uint64(FUNC), uint64(STR):
+	case int64Marker, float64Marker:
+		return NUM
+	}
+	switch v.val {
+	case uint64(LIST), uint64(FUNC), uint64(TEXT), uint64(INTF):
 		return ValueType(v.val)
 	}
 	if v.val >= 1<<51 {
-		if v.val < 1<<52-1 {
-			return SYM
-		}
-		return NUM
-	} else if v == Void {
+		return SYM
+	}
+	if v == Void {
 		return VOID
 	}
-	return INTF
+	panic("corrupted value")
 }
+
 func (v Value) stringify(goStyle bool) string {
 	switch v.Type() {
 	case NUM:
-		vf, vi, vIsInt := v.N()
+		vf, vi, vIsInt := v.Number()
 		if vIsInt {
 			return strconv.FormatInt(vi, 10)
 		}
 		return strconv.FormatFloat(vf, 'f', -1, 64)
-	case STR:
-		return strconv.Quote(v.S())
+	case TEXT:
+		return strconv.Quote(v.Text())
 	case SYM:
-		return v.S() + ifstr(v.LineInfo() > 0, fmt.Sprintf(ifstr(goStyle, " /*L%d*/", " #|L%d|#"), v.LineInfo()), "")
+		return v.Text() + ifstr(v.SymLineInfo() > 0, fmt.Sprintf(ifstr(goStyle, " /*L%d*/", " #|L%d|#"), v.SymLineInfo()), "")
 	case LIST:
 		p := bytes.NewBufferString("( ")
-		for vl := v.L(); vl != nil && !vl.empty; vl = vl.next {
+		for vl := v.List(); vl != nil && !vl.empty; vl = vl.next {
 			p.WriteString(ifstr(vl.next == nil, ". ", ""))
 			p.WriteString(vl.val.stringify(goStyle))
 			p.WriteString(" ")
@@ -720,91 +735,93 @@ func (v Value) stringify(goStyle bool) string {
 		p.WriteString(")")
 		return p.String()
 	case BOOL:
-		return ifstr(v.B(), ifstr(goStyle, "true", "#t"), ifstr(goStyle, "false", "#f"))
+		return ifstr(v.Bool(), ifstr(goStyle, "true", "#t"), ifstr(goStyle, "false", "#f"))
 	case INTF:
-		return "#" + fmt.Sprintf("%#v", *v.A())
+		return "#" + fmt.Sprintf("%#v", v.Interface())
 	case FUNC:
-		return v.F().String()
+		return v.Func().String()
 	default:
 		return ifstr(goStyle, "nil", "#v")
 	}
 }
-func (v Value) V() interface{} {
+
+func (v Value) Interface() interface{} {
 	switch v.Type() {
 	case NUM:
-		vf, vi, vIsInt := v.N()
+		vf, vi, vIsInt := v.Number()
 		if vIsInt {
 			return vi
 		}
 		return vf
-	case STR, SYM:
-		return v.S()
+	case TEXT, SYM:
+		return v.Text()
 	case LIST:
 		var a []interface{}
-		v.L().Foreach(func(v Value) bool { a = append(a, v.V()); return true })
+		v.List().Foreach(func(v Value) bool { a = append(a, v.Interface()); return true })
 		return a
 	case BOOL:
-		return v.B()
+		return v.Bool()
 	case INTF:
-		return *v.A()
+		return *(*interface{})(v.ptr)
 	case FUNC:
-		return v.F()
+		return v.Func()
 	default:
 		return nil
 	}
 }
+
 func (v Value) Equals(v2 Value) bool {
 	if v == v2 {
 		return true
 	} else if vflag, v2flag := v.Type(), v2.Type(); vflag == v2flag {
 		switch vflag {
-		case SYM, STR:
-			return v.S() == v2.S()
+		case SYM, TEXT:
+			return v.Text() == v2.Text()
 		case INTF:
-			return *v.A() == *v2.A()
+			return v.Interface() == v2.Interface()
 		}
 	}
 	return false
 }
+
 func (v Value) findSym(depth int) (string, uint32) {
 	if t := v.Type(); t == SYM {
-		return strings.Repeat("(", depth) + v.S() + strings.Repeat(" ...)", depth), v.LineInfo()
+		return strings.Repeat("(", depth) + v.Text() + strings.Repeat(" ...)", depth), v.SymLineInfo()
 	} else if t == LIST {
-		return v.L().val.findSym(depth + 1)
+		return v.List().val.findSym(depth + 1)
 	}
 	return "", 0
-}
-func (v Value) N() (floatVal float64, intVal int64, isInt bool) {
-	if v.ptr == int64Marker {
-		return float64(int64(v.val)), int64(v.val), true
-	}
-	f := math.Float64frombits(^v.val)
-	return f, int64(f), float64(int64(f)) == f
-}
-func (v Value) I() int64 {
-	if v.ptr == int64Marker {
-		return int64(v.val)
-	}
-	return int64(math.Float64frombits(^v.val))
 }
 func (v Value) expect(s *State, t ValueType) Value {
 	s.assert(v.Type() == t || s.panic("invalid argument #%d, expect %s, got %v", s.argIdx, Types[t], v))
 	return v
 }
-func (v *Value) A() *interface{} {
-	return (*interface{})(unsafe.Pointer((uintptr(unsafe.Pointer(v)) + (64-strconv.IntSize)/8)))
+
+func (v Value) Number() (floatVal float64, intVal int64, isInt bool) {
+	if v.ptr == int64Marker {
+		return float64(int64(v.val)), int64(v.val), true
+	}
+	f := math.Float64frombits(v.val)
+	return f, int64(f), false
 }
-func (v Value) F() *Func            { return (*Func)(v.ptr) }
-func (v Value) B() bool             { return v.val == 2 }
-func (v Value) S() string           { return *(*string)(v.ptr) }
-func (v Value) L() *Pair            { return (*Pair)(v.ptr) }
-func (v Value) Y(text string) Value { return Y(text, uint32(v.Type()/SYM)*v.LineInfo()) }
-func (v Value) LineInfo() uint32    { return uint32(v.val) }
-func (v Value) String() string      { return v.stringify(false) }
-func (v Value) GoString() string    { return fmt.Sprintf("{val:%016x ptr:%016x}", v.val, v.ptr) }
-func (v Value) IsFalse() bool       { return v.val < 2 } // 0: void, 1: false
-func (v *Value) nop(b bool) Value   { return *v }
-func (v *Value) of(v2 Value) bool   { *v = v2; return true }
+func (v Value) Int() int64 {
+	if v.ptr == int64Marker {
+		return int64(v.val)
+	}
+	return int64(math.Float64frombits(v.val))
+}
+func (v Value) Func() *Func               { return (*Func)(v.ptr) }
+func (v Value) Bool() bool                { return v.val == 1 }
+func (v Value) Text() string              { return *(*string)(v.ptr) }
+func (v Value) List() *Pair               { return (*Pair)(v.ptr) }
+func (v Value) SetText(text string) Value { return Y(text, uint32(v.Type()/SYM)*v.SymLineInfo()) }
+func (v Value) SymLineInfo() uint32       { return uint32(v.val) }
+func (v Value) IsFalse() bool             { return v == Void || v.val == 0 } // 0: void, 1: false
+func (v Value) String() string            { return v.stringify(false) }
+func (v Value) GoString() string          { return fmt.Sprintf("{val:%016x ptr:%016x}", v.val, v.ptr) }
+
+func (v *Value) nop(b bool) Value { return *v }
+func (v *Value) of(v2 Value) bool { *v = v2; return true }
 
 func (p *Pair) Car() Value           { panicif(p.Empty(), "car: empty list"); return p.val }
 func (p *Pair) SetCar(v Value) *Pair { panicif(p.Empty(), "car: empty list"); p.val = v; return p }
@@ -840,7 +857,7 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 	}
 	if p.MustProper().Empty() {
 		if pattern.val.Type() == SYM && !pattern.HasProperCdr() {
-			if w := isWildcard(pattern.val.S()); w != "" {
+			if w := isWildcard(pattern.val.Text()); w != "" {
 				m[w] = L(Empty)
 				return true
 			}
@@ -849,7 +866,7 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 	}
 	switch pattern.val.Type() {
 	case SYM:
-		sym := pattern.val.S()
+		sym := pattern.val.Text()
 		if sym == "_" {
 			break
 		}
@@ -885,7 +902,7 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 		}
 		m[sym] = p.val
 	case LIST:
-		if lst := pattern.val.L(); lst.val.Type() == SYM && lst.val.S() == "quote" {
+		if lst := pattern.val.List(); lst.val.Type() == SYM && lst.val.Text() == "quote" {
 			if __exec(lst.next.val, execState{
 				deadline: state.deadline,
 				debug:    state.debug,
@@ -899,7 +916,7 @@ func (p *Pair) match(state execState, pattern *Pair, metWildcard bool, symbols m
 		if p.val.Type() != LIST {
 			return false
 		}
-		if !p.val.L().match(state, pattern.val.L(), false, symbols, m) {
+		if !p.val.List().match(state, pattern.val.List(), false, symbols, m) {
 			return false
 		}
 	default:
@@ -931,12 +948,10 @@ func (p *Pair) Last() (last *Pair) {
 	}
 	return
 }
-func (p *Pair) IsProperList() bool {
+func (p *Pair) Proper() bool {
 	for ; ; p = p.next {
-		if p.Improper() {
-			return false
-		} else if p.Empty() {
-			return true
+		if p.Improper() || p.Empty() {
+			return p.Empty()
 		}
 	}
 }
@@ -948,7 +963,7 @@ func (p *Pair) Cdr() (v Value) {
 func (p *Pair) SetCdr(v Value) *Pair {
 	panicif(p.Empty(), "cdr: empty list")
 	if v.Type() == LIST {
-		p.next = v.L()
+		p.next = v.List()
 	} else {
 		p.next = &Pair{val: v}
 	}

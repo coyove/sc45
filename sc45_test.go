@@ -49,14 +49,14 @@ func TestMarshal(t *testing.T) {
 	buf, err := v.Marshal()
 	panicerr(err)
 	panicerr(v.Unmarshal(it, buf))
-	if d := v.V().(*dummy); d.V.V3 != 10 {
+	if d := v.Interface().(*dummy); d.V.V3 != 10 {
 		t.Fatal(d)
 	}
 	v, _ = it.Run(Forever, "(d)")
 	buf, err = v.Marshal()
 	panicerr(err)
 	panicerr(v.Unmarshal(it, buf))
-	if d := v.V().(dummy); d.V.V3 != 10 {
+	if d := v.Interface().(dummy); d.V.V3 != 10 {
 		t.Fatal(d)
 	}
 
@@ -64,7 +64,7 @@ func TestMarshal(t *testing.T) {
 
 func TestNumber(t *testing.T) {
 	check := func(n Value, v float64) {
-		if vf, _, _ := n.N(); n.Type() != NUM || vf != v {
+		if vf, _, _ := n.Number(); n.Type() != NUM || vf != v {
 			t.Fatal(n.GoString(), v)
 		}
 	}
@@ -78,7 +78,7 @@ func TestNumber(t *testing.T) {
 	for i := 0; i < 1e6; i++ {
 		x := rand.Int63()
 		v := I(x)
-		if v.Type() != NUM || v.I() != x {
+		if v.Type() != NUM || v.Int() != x {
 			t.FailNow()
 		}
 	}
@@ -86,7 +86,7 @@ func TestNumber(t *testing.T) {
 	for _, i := range []int64{1, -1} {
 		x := int64(math.MaxInt64) * i
 		v := I(x)
-		if v.Type() != NUM || v.I() != x {
+		if v.Type() != NUM || v.Int() != x {
 			t.FailNow()
 		}
 	}
@@ -139,7 +139,7 @@ func TestOne(t *testing.T) {
 		return a
 	}))
 	it.Store("make/bytes", NewFunc(1, func(s *State) {
-		n := s.In().V()
+		n := s.In().Interface()
 		l := make([]byte, n.(int64))
 		for i := 0; i < len(l); i++ {
 			l[i] = byte(i) + 1

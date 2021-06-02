@@ -41,9 +41,9 @@ func (v Value) Marshal() (buf []byte, err error) {
 	}()
 	p := &bytes.Buffer{}
 	if v.Type() == LIST {
-		if vl := v.L(); !vl.empty && vl.next == Empty && vl.val.Type() == FUNC && vl.val.F().natToplevel {
+		if vl := v.List(); !vl.empty && vl.next == Empty && vl.val.Type() == FUNC && vl.val.Func().natToplevel {
 			// ( (toplevel-lambda) )
-			f := vl.val.F()
+			f := vl.val.Func()
 			p.WriteByte('T')
 			p.WriteByte('s') // write a STR value
 			writeString(p, f.Source)
@@ -77,7 +77,7 @@ func writeString(p *bytes.Buffer, s string) {
 func (v Value) marshal(p *bytes.Buffer) {
 	switch v.Type() {
 	case NUM:
-		vf, vi, vIsInt := v.N()
+		vf, vi, vIsInt := v.Number()
 		if vIsInt {
 			p.WriteByte('N')
 			var tmp [10]byte
@@ -90,15 +90,15 @@ func (v Value) marshal(p *bytes.Buffer) {
 	case SYM:
 		p.WriteByte('y')
 		var tmp [10]byte
-		n := binary.PutVarint(tmp[:], int64(v.LineInfo()))
+		n := binary.PutVarint(tmp[:], int64(v.SymLineInfo()))
 		p.Write(tmp[:n])
 		fallthrough
-	case STR:
+	case TEXT:
 		p.WriteByte('s')
-		writeString(p, v.S())
+		writeString(p, v.Text())
 	case LIST:
 		p.WriteByte('l')
-		vl := v.L()
+		vl := v.List()
 		for vl != nil && !vl.empty {
 			if vl.next == nil {
 				p.WriteByte(0)
@@ -110,7 +110,7 @@ func (v Value) marshal(p *bytes.Buffer) {
 		}
 		p.WriteByte('L')
 	case BOOL:
-		if v.B() {
+		if v.Bool() {
 			p.WriteByte('B')
 		} else {
 			p.WriteByte('b')
@@ -118,7 +118,7 @@ func (v Value) marshal(p *bytes.Buffer) {
 	case FUNC:
 		panic(fmt.Errorf("function cannot be marshalled"))
 	case INTF:
-		i := v.V()
+		i := v.Interface()
 		t := reflect.TypeOf(i)
 		if goTypesRegRev[t] == 0 {
 			panic(fmt.Errorf("marshal: %v is not registered", t))
@@ -141,9 +141,9 @@ func (v *Value) unmarshal(ctx *Context, p interface {
 	case 'T':
 		var src, body Value
 		src.unmarshal(ctx, p)
-		panicif(src.Type() != STR, "invalid toplevel binary data")
+		panicif(src.Type() != TEXT, "invalid toplevel binary data")
 		body.unmarshal(ctx, p)
-		*v = L(Empty, F(&Func{nat: body, natCls: ctx, natToplevel: true, Source: src.S()}))
+		*v = L(Empty, F(&Func{nat: body, natCls: ctx, natToplevel: true, Source: src.Text()}))
 	case 'n':
 		var v2 float64
 		panicerr(binary.Read(p, binary.BigEndian, &v2))
@@ -157,8 +157,8 @@ func (v *Value) unmarshal(ctx *Context, p interface {
 		panicerr(err)
 		var v2 Value
 		v2.unmarshal(ctx, p)
-		panicif(v2.Type() != STR, "invalid symbol binary data")
-		*v = Y(v2.S(), uint32(line))
+		panicif(v2.Type() != TEXT, "invalid symbol binary data")
+		*v = Y(v2.Text(), uint32(line))
 	case 's':
 		ln, err := binary.ReadVarint(p)
 		panicerr(err)
