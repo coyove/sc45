@@ -182,7 +182,7 @@ func init() {
 		x := s.S()
 		if _, err := os.Stat(x); err == nil {
 			buf, err := ioutil.ReadFile(x)
-			_ = err != nil && s.Out.of(V(err)) || s.Out.of(ev2(s.Context.Parse(x, *(*string)(unsafe.Pointer(&buf)))))
+			_ = err != nil && s.Out.of(Val(err)) || s.Out.of(ev2(s.Context.Parse(x, *(*string)(unsafe.Pointer(&buf)))))
 		} else {
 			s.Out = ev2(s.Context.Parse("(parse)", x))
 		}
@@ -226,7 +226,7 @@ func init() {
 		rc, old := s.In(), s.Stack.Frames
 		defer func() {
 			if r := recover(); r != nil {
-				_ = rc.Type() != FUNC && s.Out.of(V(r)) || s.Out.of(ev2(rc.Func().CallOnStack(s.Stack, s.Deadline(), L(Empty, V(r)))))
+				_ = rc.Type() != FUNC && s.Out.of(Val(r)) || s.Out.of(ev2(rc.Func().CallOnStack(s.Stack, s.Deadline(), L(Empty, Val(r)))))
 				s.Stack.Frames = old
 			}
 		}()
@@ -243,7 +243,7 @@ func init() {
 	Default.Store("symbol->string", NewFunc(1, func(s *State) { s.Out = S(s.Y()) }))
 	Default.Store("number->string", NewFunc(1, func(s *State) { s.Out = S(fmt.Sprint(s.Nv().Interface())) }))
 	Default.Store("string->symbol", NewFunc(1, func(s *State) { s.Out = Y(s.S(), 0) }))
-	Default.Store("string->error", NewFunc(1, func(s *State) { s.Out = V(fmt.Errorf(s.S())) }))
+	Default.Store("string->error", NewFunc(1, func(s *State) { s.Out = Val(fmt.Errorf(s.S())) }))
 	Default.Store("string->number", NewFunc(1, func(s *State) { s.Out = ParseNumber(s.S()) }))
 	Default.Store("error?", NewFunc(1, func(s *State) { _, ok := s.In().Interface().(error); s.Out = B(ok) }))
 	Default.Store("null?", NewFunc(1, func(s *State) { s.Out = B(s.In().Type() == LIST && s.LastIn.List().MustProper().Empty()) }))
@@ -306,7 +306,7 @@ func init() {
 		for !s.Args.MustProper().Empty() {
 			m[s.S()] = s.In()
 		}
-		s.Out = V(m)
+		s.Out = Val(m)
 	}))
 	Default.Store("hash-set!", NewFunc(3, func(s *State) { s.InMap()[s.S()] = s.In() }))
 	Default.Store("hash-delete!", NewFunc(2, func(s *State) { delete(s.InMap(), s.S()) }))
@@ -322,15 +322,15 @@ func init() {
 
 	Default.Store("string-length", NewFunc(1, func(s *State) { s.Out = I(int64(len(s.S()))) }))
 	Default.Store("substring?", NewFunc(2, func(s *State) { s.Out = B(strings.Contains(s.S(), s.S())) }))
-	Default.Store("vector-bytes", NewFunc(1, func(s *State) { s.Out = V(make([]byte, s.Nv().Int())) }))
-	Default.Store("vector-strings", NewFunc(1, func(s *State) { s.Out = V(make([]string, s.Nv().Int())) }))
-	Default.Store("vector-ints", NewFunc(1, func(s *State) { s.Out = V(make([]int, s.Nv().Int())) }))
-	Default.Store("vector-int64s", NewFunc(1, func(s *State) { s.Out = V(make([]int64, s.Nv().Int())) }))
+	Default.Store("vector-bytes", NewFunc(1, func(s *State) { s.Out = Val(make([]byte, s.Nv().Int())) }))
+	Default.Store("vector-strings", NewFunc(1, func(s *State) { s.Out = Val(make([]string, s.Nv().Int())) }))
+	Default.Store("vector-ints", NewFunc(1, func(s *State) { s.Out = Val(make([]int, s.Nv().Int())) }))
+	Default.Store("vector-int64s", NewFunc(1, func(s *State) { s.Out = Val(make([]int64, s.Nv().Int())) }))
 	Default.Store("vector-len", NewFunc(1, func(s *State) { s.Out = I(int64((reflect.ValueOf(s.In().Interface()).Len()))) }))
 	Default.Store("vector-null?", NewFunc(1, func(s *State) { s.Out = B(reflect.ValueOf(s.In().Interface()).Len() == 0) }))
 	Default.Store("vector-nth", NewFunc(2, func(s *State) {
 		rm := reflect.ValueOf(s.In().Interface())
-		s.Out = V(rm.Index(int(s.Nv().Int())).Interface())
+		s.Out = Val(rm.Index(int(s.Nv().Int())).Interface())
 	}))
 	Default.Store("vector-set-nth!", NewFunc(3, func(s *State) {
 		rm := reflect.ValueOf(s.In().Interface())
@@ -339,7 +339,7 @@ func init() {
 	Default.Store("vector-slice", NewFunc(3, func(s *State) {
 		rl := reflect.ValueOf(s.In().Interface())
 		start, end := int(s.Nv().Int()), int(s.Nv().Int())
-		s.Out = V(rl.Slice(start, end).Interface())
+		s.Out = Val(rl.Slice(start, end).Interface())
 	}))
 	Default.Store("vector-concat", NewFunc(2, func(s *State) {
 		rv1, rv2 := reflect.ValueOf(s.In().Interface()), reflect.ValueOf(s.In().Interface())
@@ -347,12 +347,12 @@ func init() {
 		r := reflect.MakeSlice(rv1.Type(), rv1.Len(), rv1.Len()+rv2.Len())
 		reflect.Copy(r, rv1)
 		reflect.AppendSlice(r, rv2)
-		s.Out = V(r.Interface())
+		s.Out = Val(r.Interface())
 	}))
 	Default.Store("vector-foreach", NewFunc(2, func(s *State) {
 		rl, fn := reflect.ValueOf(s.In().Interface()), s.F()
 		for i := 0; i < rl.Len(); i++ {
-			flag, err := fn.CallOnStack(s.Stack, s.Deadline(), L(Empty, I(int64(i)), V(rl.Index(i).Interface())))
+			flag, err := fn.CallOnStack(s.Stack, s.Deadline(), L(Empty, I(int64(i)), Val(rl.Index(i).Interface())))
 			s.assert(err == nil || s.panic("invalid callback "))
 			if flag.IsFalse() {
 				break
@@ -400,7 +400,7 @@ func init() {
 			rv = rv.FieldByName(v.Text())
 			return true
 		})
-		s.Out = V(rv.Interface())
+		s.Out = Val(rv.Interface())
 	}))
 	Default.Store("struct-set!", NewFunc(2|Vararg, func(s *State) {
 		rv := reflect.ValueOf(s.In().Interface())
@@ -421,7 +421,7 @@ func init() {
 		s.Out = B(regexp.MustCompile(s.S()).MatchString(s.S()))
 	}))
 	Default.Store("regex-find", NewFunc(3, func(s *State) {
-		// s.Out = V(regexp.MustCompile(s.In(0, 's').S()).FindAllStringSubmatch(s.In(1, 's').S(), int(s.In(2, 'n').N())))
+		// s.Out = Val(regexp.MustCompile(s.In(0, 's').S()).FindAllStringSubmatch(s.In(1, 's').S(), int(s.In(2, 'n').N())))
 	}))
 	Default.Store("json", NewFunc(1, func(s *State) {
 		buf, err := json.MarshalIndent(s.In().Interface(), "", "  ")
@@ -436,15 +436,15 @@ func init() {
 		if strings.HasPrefix(text, "{") {
 			m := map[string]interface{}{}
 			err := json.Unmarshal([]byte(text), &m)
-			_ = err != nil && s.Out.of(V(err)) || s.Out.of(V(m))
+			_ = err != nil && s.Out.of(Val(err)) || s.Out.of(Val(m))
 		} else if strings.HasPrefix(text, "[") {
 			m := []interface{}{}
 			err := json.Unmarshal([]byte(text), &m)
-			_ = err != nil && s.Out.of(V(err)) || s.Out.of(V(m))
+			_ = err != nil && s.Out.of(Val(err)) || s.Out.of(Val(m))
 		} else {
 			var m interface{}
 			err := json.Unmarshal([]byte(text), &m)
-			_ = err != nil && s.Out.of(V(err)) || s.Out.of(V(m))
+			_ = err != nil && s.Out.of(Val(err)) || s.Out.of(Val(m))
 		}
 	}))
 	Default.Store("setf!", NewFunc(2|Macro, func(s *State) {
@@ -568,7 +568,7 @@ func init() {
 	// 		fields := map[string]*_f{}
 	//
 	// 		ret := []Value{
-	// 			L(s.Caller.Y("define"), Y(recordName+"-type", 0, 0), V(typeIndicator)),
+	// 			L(s.Caller.Y("define"), Y(recordName+"-type", 0, 0), Val(typeIndicator)),
 	// 		}
 	//
 	// 		for i := 1; i < len(s.Args); i++ {
@@ -595,7 +595,7 @@ func init() {
 	// 				s.assert(typeIndicator.parent == nil || s.panic("multiple parents: %v", l[1]))
 	// 				s.assert(l[1].Type() == SYM || s.panic("invalid parent: %v", l[1]))
 	// 				pf, _ := s.Context.Load(l[1].S() + "-type")
-	// 				typeIndicator.parent = pf.V().(*record)
+	// 				typeIndicator.parent = pf.Val().(*record)
 	// 			}
 	// 		}
 	//
@@ -631,7 +631,7 @@ func init() {
 	// 			))
 	// 		}
 	//
-	// 		ret = Append(ret, L(s.Caller.Y("define"), Y(recordName+"-primary-fields", 0, 0), V(fieldNames)))
+	// 		ret = Append(ret, L(s.Caller.Y("define"), Y(recordName+"-primary-fields", 0, 0), Val(fieldNames)))
 	//
 	// 		// name, fields, typename := s.In(0, SYM).S(), make(map[string]int, len(s.Args)-1), new(int)
 	// 		// for i := 1; i < len(s.Args); i++ {
@@ -640,26 +640,26 @@ func init() {
 	// 		// 		name := name + "-" + s.In(i, SYM).S()
 	//
 	// 		// 		s.Context.Install(name, 1, func(ss *State) { // getter
-	// 		// 			ss.assert(len(ss.In(0, LIST).L()) == len(s.Args) && ss.In(0, LIST).L()[0].V() == typename || ss.panic("not a %s record", name))
+	// 		// 			ss.assert(len(ss.In(0, LIST).L()) == len(s.Args) && ss.In(0, LIST).L()[0].Val() == typename || ss.panic("not a %s record", name))
 	// 		// 			ss.Out = ss.In(0, LIST).L()[i]
 	// 		// 		})
 	//
 	// 		// 		s.Context.Install(name+"-set!", 2, func(ss *State) { // setter
-	// 		// 			ss.assert(len(ss.In(0, LIST).L()) == len(s.Args) && ss.In(0, LIST).L()[0].V() == typename || ss.panic("not a %s record", name))
+	// 		// 			ss.assert(len(ss.In(0, LIST).L()) == len(s.Args) && ss.In(0, LIST).L()[0].Val() == typename || ss.panic("not a %s record", name))
 	// 		// 			ss.In(0, LIST).L()[i] = ss.In(1, 0) // setter
 	// 		// 		})
 	// 		// 	}(i)
 	// 		// }
 	//
 	// 		// s.Context.Install(name+"?", 1, func(ss *State) {
-	// 		// 	ss.Out = B(len(ss.In(0, LIST).L()) == len(s.Args) && ss.In(0, LIST).L()[0].V() == typename)
+	// 		// 	ss.Out = B(len(ss.In(0, LIST).L()) == len(s.Args) && ss.In(0, LIST).L()[0].Val() == typename)
 	// 		// })
 	//
 	// 		ret = Append(ret, L(s.Caller.Y("define"), Y("make-"+recordName, 0, 0),
 	// 			_Vquote(NewFunc(&Func{
 	// 				fargs: calcRecordTotalArgs(typeIndicator),
 	// 				f: func(ss *State) {
-	// 					v := Append([]Value{V(typeIndicator)}, ss.Args...)
+	// 					v := Append([]Value{Val(typeIndicator)}, ss.Args...)
 	// 					s.Out = L(v...)
 	// 				},
 	// 			})),
@@ -696,7 +696,7 @@ func (v Value) TypedVal(t reflect.Type) reflect.Value {
 }
 
 func ev2(v interface{}, err error) (e Value) {
-	_ = err != nil && e.of(V(err)) || e.of(V(v))
+	_ = err != nil && e.of(Val(err)) || e.of(Val(v))
 	return
 }
 
@@ -752,5 +752,5 @@ func Vrec(v interface{}) Value {
 		}
 		return l.Build()
 	}
-	return V(v)
+	return Val(v)
 }

@@ -200,11 +200,11 @@ func (v *Value) unmarshal(ctx *Context, p interface {
 		if rt.Kind() == reflect.Ptr {
 			rv := reflect.New(rt.Elem())
 			panicerr(gob.NewDecoder(p).Decode(rv.Interface()))
-			*v = V(rv.Interface())
+			*v = Val(rv.Interface())
 		} else {
 			rv := reflect.New(rt)
 			panicerr(gob.NewDecoder(p).Decode(rv.Interface()))
-			*v = V(rv.Elem().Interface())
+			*v = Val(rv.Elem().Interface())
 		}
 	default:
 		*v = Void

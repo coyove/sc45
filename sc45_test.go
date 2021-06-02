@@ -37,12 +37,12 @@ func TestMarshal(t *testing.T) {
 	it.Store("pd", NewFunc(Macro, func(s *State) {
 		d := &dummy{}
 		d.V.V3 = 10
-		s.Out = V(d)
+		s.Out = Val(d)
 	}))
 	it.Store("d", NewFunc(Macro, func(s *State) {
 		d := dummy{}
 		d.V.V3 = 10
-		s.Out = V(d)
+		s.Out = Val(d)
 	}))
 
 	v, _ := it.Run(Forever, "(pd)")
@@ -110,7 +110,7 @@ func TestOne(t *testing.T) {
 		log.Println(v, "===>", r)
 	}
 	_ = assert
-	it.Store("assert", V(func(c Value) {
+	it.Store("assert", Val(func(c Value) {
 		if c.IsFalse() {
 			panic(fmt.Errorf("assertion failed"))
 		}
@@ -122,16 +122,16 @@ func TestOne(t *testing.T) {
 	}))
 	it.Store("test/struct-gen", NewFunc(1, func(s *State) {
 		if s.In().IsFalse() {
-			s.Out = V((*dummy)(nil))
+			s.Out = Val((*dummy)(nil))
 			return
 		}
 		d := &dummy{}
 		d.V.V2 = true
-		s.Out = V(d)
+		s.Out = Val(d)
 		return
 	}))
-	it.Store("make/vararg", V(func(v ...interface{}) []interface{} { return v }))
-	it.Store("make/vararg2", V(func(s *State, a1 int32, v2 ...string) []interface{} {
+	it.Store("make/vararg", Val(func(v ...interface{}) []interface{} { return v }))
+	it.Store("make/vararg2", Val(func(s *State, a1 int32, v2 ...string) []interface{} {
 		a := []interface{}{a1}
 		for _, v := range v2 {
 			a = append(a, v)
@@ -144,7 +144,7 @@ func TestOne(t *testing.T) {
 		for i := 0; i < len(l); i++ {
 			l[i] = byte(i) + 1
 		}
-		s.Out = V(l)
+		s.Out = Val(l)
 	}))
 	it.Store("make/list", NewFunc(1, func(s *State) {
 		l := make([]Value, s.I())

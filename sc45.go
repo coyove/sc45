@@ -120,7 +120,7 @@ func (s *Stack) String() (p string) {
 func (f *Func) Call(a ...interface{}) (result Value, err error) {
 	v := InitListBuilder()
 	for _, a := range a {
-		v = v.Append(V(a))
+		v = v.Append(Val(a))
 	}
 	return f.CallOnStack(nil, Forever, v.Build())
 }
@@ -601,8 +601,8 @@ func panicif(v bool, t string) {
 	}
 }
 
-// V creates Value from interface{}
-func V(v interface{}) (va Value) {
+// Val creates a Value struct
+func Val(v interface{}) (va Value) {
 	if vv, ok := v.(Value); ok {
 		return vv
 	} else if f, ok := v.(*Func); ok {
@@ -610,7 +610,7 @@ func V(v interface{}) (va Value) {
 	}
 	switch rv := reflect.ValueOf(v); rv.Kind() {
 	case reflect.Interface:
-		return V(rv.Elem())
+		return Val(rv.Elem())
 	case reflect.Invalid:
 		return Void
 	case reflect.Int64, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32:
@@ -639,14 +639,14 @@ func V(v interface{}) (va Value) {
 			s.Args.Foreach(func(v Value) bool { ins = append(ins, s.In().TypedVal(rt.In(rtNumIn-1).Elem())); return true })
 			switch outs := rv.Call(ins); rt.NumOut() {
 			case 1:
-				s.Out = V(outs[0].Interface())
+				s.Out = Val(outs[0].Interface())
 			case 2:
 				err, _ := outs[1].Interface().(error)
-				s.Out.nop(err != nil && s.Out.of(V(err)) || s.Out.of(V(outs[0].Interface())))
+				s.Out.nop(err != nil && s.Out.of(Val(err)) || s.Out.of(Val(outs[0].Interface())))
 			default:
 				r := InitListBuilder()
 				for _, o := range outs {
-					r = r.Append(V(o.Interface()))
+					r = r.Append(Val(o.Interface()))
 				}
 				s.Out.nop(r.Len != 0 && s.Out.of(r.Build()) || s.Out.of(Void))
 			}
@@ -769,7 +769,6 @@ func (v Value) Interface() interface{} {
 		return nil
 	}
 }
-
 func (v Value) Equals(v2 Value) bool {
 	if v == v2 {
 		return true
@@ -783,20 +782,6 @@ func (v Value) Equals(v2 Value) bool {
 	}
 	return false
 }
-
-func (v Value) findSym(depth int) (string, uint32) {
-	if t := v.Type(); t == SYM {
-		return strings.Repeat("(", depth) + v.Text() + strings.Repeat(" ...)", depth), v.SymLineInfo()
-	} else if t == LIST {
-		return v.List().val.findSym(depth + 1)
-	}
-	return "", 0
-}
-func (v Value) expect(s *State, t ValueType) Value {
-	s.assert(v.Type() == t || s.panic("invalid argument #%d, expect %s, got %v", s.argIdx, Types[t], v))
-	return v
-}
-
 func (v Value) Number() (floatVal float64, intVal int64, isInt bool) {
 	if v.ptr == int64Marker {
 		return float64(int64(v.val)), int64(v.val), true
@@ -810,18 +795,30 @@ func (v Value) Int() int64 {
 	}
 	return int64(math.Float64frombits(v.val))
 }
-func (v Value) Func() *Func               { return (*Func)(v.ptr) }
-func (v Value) Bool() bool                { return v.val == 1 }
-func (v Value) Text() string              { return *(*string)(v.ptr) }
-func (v Value) List() *Pair               { return (*Pair)(v.ptr) }
-func (v Value) SetText(text string) Value { return Y(text, uint32(v.Type()/SYM)*v.SymLineInfo()) }
-func (v Value) SymLineInfo() uint32       { return uint32(v.val) }
-func (v Value) IsFalse() bool             { return v == Void || v.val == 0 } // 0: void, 1: false
+func (v Value) Func() *Func               { return (*Func)(v.ptr) }                                // unsafe
+func (v Value) Bool() bool                { return v.val == 1 }                                    // unsafe
+func (v Value) Text() string              { return *(*string)(v.ptr) }                             // unsafe
+func (v Value) List() *Pair               { return (*Pair)(v.ptr) }                                // unsafe
+func (v Value) SetText(text string) Value { return Y(text, uint32(v.Type()/SYM)*v.SymLineInfo()) } // unsafe
+func (v Value) SymLineInfo() uint32       { return uint32(v.val) }                                 // unsafe
+func (v Value) IsFalse() bool             { return v == Void || v.val == 0 }                       // unsafe
 func (v Value) String() string            { return v.stringify(false) }
 func (v Value) GoString() string          { return fmt.Sprintf("{val:%016x ptr:%016x}", v.val, v.ptr) }
 
 func (v *Value) nop(b bool) Value { return *v }
 func (v *Value) of(v2 Value) bool { *v = v2; return true }
+func (v Value) findSym(depth int) (string, uint32) {
+	if t := v.Type(); t == SYM {
+		return strings.Repeat("(", depth) + v.Text() + strings.Repeat(" ...)", depth), v.SymLineInfo()
+	} else if t == LIST {
+		return v.List().val.findSym(depth + 1)
+	}
+	return "", 0
+}
+func (v Value) expect(s *State, t ValueType) Value {
+	s.assert(v.Type() == t || s.panic("invalid argument #%d, expect %s, got %v", s.argIdx, Types[t], v))
+	return v
+}
 
 func (p *Pair) Car() Value           { panicif(p.Empty(), "car: empty list"); return p.val }
 func (p *Pair) SetCar(v Value) *Pair { panicif(p.Empty(), "car: empty list"); p.val = v; return p }
