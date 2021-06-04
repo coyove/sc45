@@ -64,35 +64,35 @@ func TestMarshal(t *testing.T) {
 
 func TestNumber(t *testing.T) {
 	check := func(n Value, v float64) {
-		if vf, _, _ := n.Number(); n.Type() != NUM || vf != v {
+		if vf, _, _ := n.Num(); n.Type() != NumType || vf != v {
 			t.Fatal(n.GoString(), v)
 		}
 	}
-	check(N(0), 0)
-	check(N(math.Inf(1)), math.Inf(1))
-	check(N(math.Inf(-1)), math.Inf(-1))
-	check(N(math.MaxFloat64), math.MaxFloat64)
-	check(N(-math.MaxFloat64), -math.MaxFloat64)
+	check(Num(0), 0)
+	check(Num(math.Inf(1)), math.Inf(1))
+	check(Num(math.Inf(-1)), math.Inf(-1))
+	check(Num(math.MaxFloat64), math.MaxFloat64)
+	check(Num(-math.MaxFloat64), -math.MaxFloat64)
 
 	rand.Seed(time.Now().Unix())
 	for i := 0; i < 1e6; i++ {
 		x := rand.Int63()
-		v := I(x)
-		if v.Type() != NUM || v.Int() != x {
+		v := Int(x)
+		if v.Type() != NumType || v.Int() != x {
 			t.FailNow()
 		}
 	}
 
 	for _, i := range []int64{1, -1} {
 		x := int64(math.MaxInt64) * i
-		v := I(x)
-		if v.Type() != NUM || v.Int() != x {
+		v := Int(x)
+		if v.Type() != NumType || v.Int() != x {
 			t.FailNow()
 		}
 	}
 
 	var v uint64 = 0x8ffffffffffffff7
-	if I(int64(v)).Equals(N(math.Float64frombits(^v))) {
+	if Int(int64(v)).Equals(Num(math.Float64frombits(^v))) {
 		t.Fatal("check Value.Equals")
 	}
 }
@@ -111,17 +111,17 @@ func TestOne(t *testing.T) {
 	}
 	_ = assert
 	it.Store("assert", Val(func(c Value) {
-		if c.IsFalse() {
+		if c.Falsy() {
 			panic(fmt.Errorf("assertion failed"))
 		}
 	}))
 	it.Store("current-location", NewFunc(0, func(s *State) {
 		locs := s.Stack.StackLocations(false)
 		fmt.Println(locs)
-		s.Out = S(locs[len(locs)-1])
+		s.Out = Str(locs[len(locs)-1])
 	}))
 	it.Store("test/struct-gen", NewFunc(1, func(s *State) {
-		if s.In().IsFalse() {
+		if s.In().Falsy() {
 			s.Out = Val((*dummy)(nil))
 			return
 		}
@@ -149,16 +149,16 @@ func TestOne(t *testing.T) {
 	it.Store("make/list", NewFunc(1, func(s *State) {
 		l := make([]Value, s.I())
 		for i := 0; i < len(l); i++ {
-			l[i] = N(float64(i) + 1)
+			l[i] = Num(float64(i) + 1)
 		}
-		s.Out = L(Empty, l...)
+		s.Out = List(Empty, l...)
 	}))
 	it.Store("range", NewFunc(2, func(s *State) {
 		m := s.InMap()
 		f := s.F()
 		for k, v := range m {
-			err, _ := f.CallOnStack(s.Stack, Forever, L(Empty, S(k), v))
-			if err.IsFalse() {
+			err, _ := f.CallOnStack(s.Stack, Forever, List(Empty, Str(k), v))
+			if err.Falsy() {
 				s.Out = v
 				return
 			}
