@@ -121,7 +121,7 @@ func TestOne(t *testing.T) {
 		s.Out = Str(locs[len(locs)-1])
 	}))
 	it.Store("test/struct-gen", NewFunc(1, func(s *State) {
-		if s.In().Falsy() {
+		if s.Next().Falsy() {
 			s.Out = Val((*dummy)(nil))
 			return
 		}
@@ -139,7 +139,7 @@ func TestOne(t *testing.T) {
 		return a
 	}))
 	it.Store("make/bytes", NewFunc(1, func(s *State) {
-		n := s.In().Interface()
+		n := s.Next().Interface()
 		l := make([]byte, n.(int64))
 		for i := 0; i < len(l); i++ {
 			l[i] = byte(i) + 1
@@ -165,8 +165,8 @@ func TestOne(t *testing.T) {
 		}
 	}))
 	it.Store("iff", NewFunc(2|Macro, func(s *State) {
-		s.In()
-		s.Out = s.In()
+		s.Next()
+		s.Out = s.Next()
 	}))
 
 	// assert("s/fib.scm")

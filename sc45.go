@@ -34,15 +34,17 @@ var (
 
 type (
 	Function struct {
-		Source, name string       // filename inherited from the toplevel lambda, name => native: variadic argument name, builtin: last assigned name
-		Vararg       bool         // is variadic
-		Macro        bool         // is macro
-		natToplevel  bool         // native: toplevel
-		natArgNames  []string     // native: arguments binding list
-		natCls       *Context     // native: closure
-		nat          Value        // native
-		MinArgNum    int          // builtin: minimal arguments required
-		F            func(*State) // builtin
+		Source         string   // filename inherited from the toplevel lambda
+		Vararg         bool     // is variadic
+		Macro          bool     // is macro
+		NativeToplevel bool     // native: toplevel
+		NativeArgs     []string // native: arguments binding list
+		NativeVararg   string
+		NativeCtx      *Context // native: closure
+		Native         Value    // native
+		GoMinArgNum    int      // go: minimal arguments required
+		GoName         string
+		Go             func(*State) // go
 	}
 	State struct {
 		*Context
@@ -73,16 +75,21 @@ type (
 		local     *Context
 		macroMode bool
 	}
-	assertable struct{ err error }
+	assertable struct {
+		err error
+	}
 )
 
-func New() *Context { return Default.Copy() }
+func New() *Context {
+	return Default.Copy()
+}
 
 func (s *Stack) popAndReturn(v Value) Value {
 	s.nextLoc = s.Frames[len(s.Frames)-1].Loc
 	s.Frames = s.Frames[:len(s.Frames)-1]
 	return v
 }
+
 func (s *Stack) push(k Value, tail bool) {
 	if !tail {
 		s.Frames = append(s.Frames, frame{K: k, Loc: s.nextLoc})
@@ -99,7 +106,11 @@ func (s *Stack) StackLocations(includeBuiltin bool) (locs []string) {
 	}
 	return locs
 }
-func (s *Stack) LastLocation() string { return s.Frames[len(s.Frames)-1].Loc }
+
+func (s *Stack) LastLocation() string {
+	return s.Frames[len(s.Frames)-2].Loc
+}
+
 func (s *Stack) String() (p string) {
 	for _, k := range s.Frames {
 		if sym, li := k.K.FindFirstSym(0); sym != "" && li > 0 {
@@ -116,6 +127,7 @@ func (f *Function) Call(a ...interface{}) (result Value, err error) {
 	}
 	return f.CallOnStack(nil, Forever, v.Build())
 }
+
 func (f *Function) CallOnStack(dbg *Stack, deadline time.Time, args Value) (result Value, err error) {
 	expr := List(args.List(), Func(f).Quote())
 	if dbg == nil {
@@ -124,33 +136,38 @@ func (f *Function) CallOnStack(dbg *Stack, deadline time.Time, args Value) (resu
 	defer debugCatch(dbg, &err)
 	return __exec(expr, execState{local: (*Context)(nil), debug: dbg, deadline: deadline.Unix()}), nil
 }
+
 func (f *Function) String() string {
-	if f.nat == Void {
-		return ifstr(f.name == "", "#|missing native code|#", f.name+" #|native code|#")
-	} else if f.Vararg && len(f.natArgNames) == 0 {
-		return ifstr(f.Macro, "(lambda-syntax ", "(lambda ") + f.name + " " + f.nat.String() + ")"
+	if f.Native.Void() {
+		return ifstr(f.GoName == "", "#|missing native code|#", f.GoName+" #|native code|#")
 	}
-	return ifstr(f.Macro, "(lambda-syntax (", "(lambda (") + strings.Join(f.natArgNames, " ") + ifstr(f.Vararg, " . "+f.name, "") + ") " + f.nat.String() + ")"
+	if f.Vararg && len(f.NativeArgs) == 0 {
+		return ifstr(f.Macro, "(lambda-syntax ", "(lambda ") + f.NativeVararg + " " + f.Native.String() + ")"
+	}
+	return ifstr(f.Macro, "(lambda-syntax (", "(lambda (") + strings.Join(f.NativeArgs, " ") + ifstr(f.Vararg, " . "+f.NativeVararg, "") + ") " + f.Native.String() + ")"
 }
 
-// In pops an argument
-func (s *State) In() Value {
+// Next pops an argument
+func (s *State) Next() Value {
 	s.assert(!s.Args.MustProper().Empty() || s.panic("too few arguments, expect at least %d", s.argIdx+1))
 	v := s.Args.val
 	s.argIdx, s.LastIn = s.argIdx+1, v
 	s.Args = s.Args.next
 	return v
 }
-func (s *State) Nv() Value                 { return s.In().expect(s, NumType) }
-func (s *State) N() (float64, int64, bool) { return s.In().expect(s, NumType).Num() }
-func (s *State) I() int64                  { return s.In().expect(s, NumType).Int() }
-func (s *State) S() string                 { return s.In().expect(s, StrType).Str() }
-func (s *State) Y() string                 { return s.In().expect(s, SymType).Str() }
-func (s *State) L() *Pair                  { return s.In().expect(s, ListType).List() }
-func (s *State) B() bool                   { return s.In().expect(s, BoolType).Bool() }
-func (s *State) F() *Function              { return s.In().expect(s, FuncType).Func() }
-func (s *State) V() interface{}            { return s.In().Interface() }
-func (s *State) Deadline() time.Time       { return time.Unix(s.deadline, 0) }
+func (s *State) Nv() Value                 { return s.Next().expect(s, NumType) }
+func (s *State) N() (float64, int64, bool) { return s.Next().expect(s, NumType).Num() }
+func (s *State) I() int64                  { return s.Next().expect(s, NumType).Int() }
+func (s *State) S() string                 { return s.Next().expect(s, StrType).Str() }
+func (s *State) Y() string                 { return s.Next().expect(s, SymType).Str() }
+func (s *State) L() *Pair                  { return s.Next().expect(s, ListType).List() }
+func (s *State) B() bool                   { return s.Next().expect(s, BoolType).Bool() }
+func (s *State) F() *Function              { return s.Next().expect(s, FuncType).Func() }
+func (s *State) V() interface{}            { return s.Next().Interface() }
+
+func (s *State) Deadline() time.Time {
+	return time.Unix(s.deadline, 0)
+}
 
 func (ctx *Context) find(k string) (Value, *Context) {
 	for ; ctx != nil; ctx = ctx.parent {
@@ -160,15 +177,17 @@ func (ctx *Context) find(k string) (Value, *Context) {
 	}
 	return Void, nil
 }
+
 func (ctx *Context) set(k string, v Value) {
 	if ctx.M == nil {
 		ctx.M = make(map[string]Value, 4)
 	}
 	ctx.M[k] = v
 }
+
 func (ctx *Context) Store(k string, v Value) *Context {
-	if v.Type() == FuncType && v.Func().F != nil {
-		v.Func().name = k
+	if v.Type() == FuncType && v.Func().Go != nil {
+		v.Func().GoName = k
 	}
 	if _, mv := ctx.find(k); mv == nil {
 		ctx.set(k, v)
@@ -177,10 +196,12 @@ func (ctx *Context) Store(k string, v Value) *Context {
 	}
 	return ctx
 }
+
 func (ctx *Context) Load(k string) (Value, bool) {
 	v, mv := ctx.find(k)
 	return v, mv != nil
 }
+
 func (ctx *Context) Delete(k string) (Value, bool) {
 	v, mv := ctx.find(k)
 	if mv != nil {
@@ -188,6 +209,7 @@ func (ctx *Context) Delete(k string) (Value, bool) {
 	}
 	return v, mv != nil
 }
+
 func (ctx *Context) Copy() *Context {
 	m2 := &Context{M: make(map[string]Value, len(ctx.M)), parent: ctx.parent}
 	for k, v := range ctx.M {
@@ -279,23 +301,23 @@ TAIL_CALL:
 			return state.debug.popAndReturn(Void)
 		case "lambda", "lambda-syntax":
 			state.assert(moveCdr(&c) || state.panic("lambda: missing binding list"))
-			f := &Function{natCls: state.local, Macro: va != "lambda", Source: state.debug.LastLocation()}
+			f := &Function{NativeCtx: state.local, Macro: va != "lambda", Source: state.debug.LastLocation()}
 			switch c.val.Type() {
 			case SymType: // (lambda* args body)
-				f.name, f.Vararg = fmt.Sprint(c.val.Interface()), true
+				f.NativeVararg, f.Vararg = fmt.Sprint(c.val.Interface()), true
 			case ListType: // (lambda* (a1 a2 ... an) body)
 				for bindings := c.val.List(); bindings != nil; bindings = bindings.next {
 					if p := fmt.Sprint(bindings.val.Interface()); bindings.Improper() {
-						f.name, f.Vararg = p, true
+						f.NativeVararg, f.Vararg = p, true
 					} else if !bindings.Empty() {
-						f.natArgNames = append(f.natArgNames, p)
+						f.NativeArgs = append(f.NativeArgs, p)
 					}
 				}
 			default:
 				f.Vararg = true
 			}
 			state.assert(moveCdr(&c) || state.panic("lambda: missing body"))
-			_ = c.ProperCdr() && f.nat.Set(List(c, head.SetStr("lambda-body"), Void, Void)) || f.nat.Set(c.val)
+			_ = c.ProperCdr() && f.Native.Set(List(c, head.SetStr("lambda-body"), Void, Void)) || f.Native.Set(c.val)
 			return state.debug.popAndReturn(Func(f))
 		case "match":
 			state.assert(moveCdr(&c) || state.panic("match: missing source"))
@@ -383,31 +405,31 @@ TAIL_CALL:
 	}
 
 	state.macroMode = false // clear the macro flag because a macro may call other macros as well, so more unwrappings may take place
-	if cc.F == nil {
-		m := &Context{parent: cc.natCls}
-		for i, name := range cc.natArgNames {
+	if cc.Go == nil {
+		m := &Context{parent: cc.NativeCtx}
+		for i, name := range cc.NativeArgs {
 			state.assert(moveCdr(&c) || state.panic("too few arguments, expect at least %d", i+1))
 			m.set(name, __exec(c.val, state))
 		}
 		if cc.Vararg {
 			values := InitListBuilder()
 			c.next.Foreach(func(v Value) bool { values = values.Append(__exec(v, state)); return true })
-			m.set(cc.name, values.Build())
+			m.set(cc.NativeVararg, values.Build())
 		} else {
-			state.assert(!c.ProperCdr() || state.panic("too many arguments, expect exact %d", len(cc.natArgNames)))
+			state.assert(!c.ProperCdr() || state.panic("too many arguments, expect exact %d", len(cc.NativeArgs)))
 		}
-		state.local, expr, tailCall = m, cc.nat, true
+		state.local, expr, tailCall = m, cc.Native, true
 		state.debug.nextLoc = (cc.Source)
 		goto TAIL_CALL
 	}
 
 	args := InitListBuilder()
 	c.next.Foreach(func(v Value) bool { args = args.Append(__exec(v, state)); return true })
-	state.assert(args.Len == cc.MinArgNum || (cc.Vararg && args.Len >= cc.MinArgNum) || state.panic("call: expect %d arguments", cc.MinArgNum))
+	state.assert(args.Len == cc.GoMinArgNum || (cc.Vararg && args.Len >= cc.GoMinArgNum) || state.panic("call: expect %d arguments", cc.GoMinArgNum))
 
 	state.debug.nextLoc = (cc.Source)
 	s := State{Context: state.local, Caller: head, Stack: state.debug, Args: args.head, deadline: state.deadline}
-	cc.F(&s)
+	cc.Go(&s)
 	return state.debug.popAndReturn(s.Out)
 }
 
@@ -423,7 +445,7 @@ func (ctx *Context) Parse(filename, text string) (v Value, err error) {
 
 	v = ctx.scan(s, false)
 	_ = v.Type() == ListType && v.Set(List(v.List(), Sym("if", 0), Void, Void)) || v.Set(List(Empty, Sym("if", 0), Void, Void, v))
-	v = Func(&Function{nat: v, natCls: ctx, natToplevel: true, Source: filename})
+	v = Func(&Function{Native: v, NativeCtx: ctx, NativeToplevel: true, Source: filename})
 	return List(Empty, v), nil
 }
 

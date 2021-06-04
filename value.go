@@ -76,23 +76,23 @@ func Val(v interface{}) (va Value) {
 	case reflect.Func:
 		rt := rv.Type()
 		f, rtNumIn := &Function{Vararg: rt.IsVariadic()}, rt.NumIn()
-		f.MinArgNum = rtNumIn
+		f.GoMinArgNum = rtNumIn
 		if f.Vararg {
-			f.MinArgNum--
+			f.GoMinArgNum--
 		}
 		if rtNumIn > 0 && rt.In(0) == stateType {
-			f.MinArgNum--
+			f.GoMinArgNum--
 		}
-		f.F = func(s *State) {
+		f.Go = func(s *State) {
 			ins := make([]reflect.Value, 0, rtNumIn)
 			for i := 0; i < rtNumIn+ifint(f.Vararg, -1, 0); i++ {
 				if t := rt.In(i); i == 0 && t == stateType {
 					ins = append(ins, reflect.ValueOf(s))
 				} else {
-					ins = append(ins, s.In().ReflectValue(t))
+					ins = append(ins, s.Next().ReflectValue(t))
 				}
 			}
-			s.Args.Foreach(func(v Value) bool { ins = append(ins, s.In().ReflectValue(rt.In(rtNumIn-1).Elem())); return true })
+			s.Args.Foreach(func(v Value) bool { ins = append(ins, s.Next().ReflectValue(rt.In(rtNumIn-1).Elem())); return true })
 			if outs := rv.Call(ins); rt.NumOut() == 1 {
 				s.Out = Val(outs[0].Interface())
 			} else if rt.NumOut() > 1 {
@@ -316,6 +316,10 @@ func (v Value) Falsy() bool {
 	return v == Void || v.val == 0
 } // unsafe
 
+func (v Value) Void() bool {
+	return v == Void
+}
+
 func (v Value) String() string {
 	return v.stringify(false)
 }
@@ -428,13 +432,13 @@ func (v Value) Marshal() (buf []byte, err error) {
 	}()
 	p := &bytes.Buffer{}
 	if v.Type() == ListType {
-		if vl := v.List(); !vl.empty && vl.next == Empty && vl.val.Type() == FuncType && vl.val.Func().natToplevel {
+		if vl := v.List(); !vl.empty && vl.next == Empty && vl.val.Type() == FuncType && vl.val.Func().NativeToplevel {
 			// ( (toplevel-lambda) )
 			f := vl.val.Func()
 			p.WriteByte('T')
 			p.WriteByte('s') // write a STR value
 			writeString(p, f.Source)
-			v = f.nat
+			v = f.Native
 		}
 	}
 	v.marshal(p)
@@ -530,7 +534,7 @@ func (v *Value) unmarshal(ctx *Context, p interface {
 		src.unmarshal(ctx, p)
 		panicif(src.Type() != StrType, "invalid toplevel binary data")
 		body.unmarshal(ctx, p)
-		*v = List(Empty, Func(&Function{nat: body, natCls: ctx, natToplevel: true, Source: src.Str()}))
+		*v = List(Empty, Func(&Function{Native: body, NativeCtx: ctx, NativeToplevel: true, Source: src.Str()}))
 	case 'n':
 		var v2 float64
 		panicerr(binary.Read(p, binary.BigEndian, &v2))
